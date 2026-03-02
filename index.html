@@ -8,6 +8,7 @@
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -20,10 +21,12 @@
             <div class="balance-card">
                 <span>Saldo Real</span>
                 <strong id="balance-brl">R$ 0,00</strong>
+                <div id="brl-in-pyg" class="sub-balance">≈ ₲ 0</div>
             </div>
             <div class="balance-card">
-                <span>Saldo Guarani</span>
+                <span>Saldo Total (Guarani)</span>
                 <strong id="balance-pyg">₲ 0</strong>
+                <div class="sub-balance" id="cambio-dia-texto">Inclui R$ convertido</div>
             </div>
         </div>
         <div class="quick-actions">
@@ -34,17 +37,53 @@
         </div>
     </header>
 
-    <nav class="filter-bar">
-        <button onclick="app.filterType('TUDO')" class="chip active">Tudo</button>
-        <button onclick="app.filterType('ENTRADA')" class="chip">Entradas</button>
-        <button onclick="app.filterType('SAIDA')" class="chip">Saídas</button>
-        <button onclick="app.filterType('DIVIDA')" class="chip">Dívidas</button>
-    </nav>
+    <div class="tabs-nav">
+        <button class="tab-btn active" onclick="app.switchTab('lista', this)">
+            <span class="material-symbols-rounded">list_alt</span> Movimentações
+        </button>
+        <button class="tab-btn" onclick="app.switchTab('dashboard', this)">
+            <span class="material-symbols-rounded">pie_chart</span> Dashboard
+        </button>
+    </div>
 
-    <main id="transaction-list" class="list-container">
-        </main>
+    <div id="view-lista" class="view-section active-view">
+        <nav class="filter-bar">
+            <button onclick="app.filterType('TUDO', this)" class="chip active">Tudo</button>
+            <button onclick="app.filterType('ENTRADA', this)" class="chip">Entradas</button>
+            <button onclick="app.filterType('SAIDA', this)" class="chip">Saídas</button>
+            <button onclick="app.filterType('DIVIDA', this)" class="chip">Dívidas</button>
+        </nav>
+        <main id="transaction-list" class="list-container"></main>
+        <button onclick="app.openModal('SAIDA')" class="fab"><span class="material-symbols-rounded">add</span></button>
+    </div>
 
-    <button onclick="app.openModal('SAIDA')" class="fab"><span class="material-symbols-rounded">add</span></button>
+    <div id="view-dashboard" class="view-section hidden-view" style="padding: 15px;">
+        
+        <div class="dashboard-controls" style="display: flex; flex-direction: column; gap: 15px;">
+            <div>
+                <span style="font-size: 0.85rem; color: #64748b; font-weight: bold;">Moeda do Gráfico:</span>
+                <div style="display: flex; gap: 10px; margin-top: 5px;">
+                    <button class="chip active" id="dash-btn-brl" onclick="app.setDashMoeda('BRL')">Real (R$)</button>
+                    <button class="chip" id="dash-btn-pyg" onclick="app.setDashMoeda('PYG')">Guarani (₲)</button>
+                </div>
+            </div>
+            <div>
+                <span style="font-size: 0.85rem; color: #64748b; font-weight: bold;">Filtrar Origens:</span>
+                <div style="display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap;">
+                    <button class="chip" id="dash-btn-tudo" onclick="app.setDashType('TUDO')">Tudo</button>
+                    <button class="chip" id="dash-btn-entrada" onclick="app.setDashType('ENTRADA')">Entradas</button>
+                    <button class="chip active" id="dash-btn-saida" onclick="app.setDashType('SAIDA')">Saídas</button>
+                    <button class="chip" id="dash-btn-divida" onclick="app.setDashType('DIVIDA')">Dívidas</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <h3 id="chartOriginsTitle">Despesas por Origem</h3>
+            <canvas id="chartExpenses"></canvas>
+            <div id="chart-legend" class="custom-legend"></div>
+        </div>
+    </div>
 
     <div id="modal" class="modal-overlay hidden">
         <div class="modal-content" id="modal-content">
@@ -76,10 +115,15 @@
                     <option value="CANCELADA">Cancelada</option>
                 </select>
 
+                <div class="form-group" style="margin-top: 5px;">
+                    <label style="font-size: 0.75rem; color: #64748b; margin-left: 5px;">Data da Movimentação</label>
+                    <input type="date" id="tx-date" class="input-field" required style="width: 100%; border-radius: 12px; padding: 12px; border: 1px solid #e2e8f0;">
+                </div>
+
                 <input type="number" id="amount" placeholder="0,00" step="0.01" class="input-amount" required>
 
                 <div class="form-group">
-                    <label>Comprovante (Nova Foto)</label>
+                    <label style="font-size: 0.75rem; color: #64748b; margin-left: 5px;">Comprovante (Nova Foto)</label>
                     <input type="file" id="file-input" accept="image/*" class="input-file">
                 </div>
 
