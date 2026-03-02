@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Finanças Morais</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <header class="main-header">
+        <div class="header-top">
+            <h1>Finanças Família</h1>
+            <input type="month" id="filter-month">
+        </div>
+        <div class="balance-grid">
+            <div class="balance-card">
+                <span>Saldo Real</span>
+                <strong id="balance-brl">R$ 0,00</strong>
+            </div>
+            <div class="balance-card">
+                <span>Saldo Guarani</span>
+                <strong id="balance-pyg">₲ 0</strong>
+            </div>
+        </div>
+        <div class="quick-actions">
+            <button onclick="app.openModal('DIVIDA')" class="btn-secondary">
+                <span class="material-symbols-rounded">calendar_month</span>
+                Agendar Dívida
+            </button>
+        </div>
+    </header>
+
+    <nav class="filter-bar">
+        <button onclick="app.filterType('TUDO')" class="chip active">Tudo</button>
+        <button onclick="app.filterType('ENTRADA')" class="chip">Entradas</button>
+        <button onclick="app.filterType('SAIDA')" class="chip">Saídas</button>
+        <button onclick="app.filterType('DIVIDA')" class="chip">Dívidas</button>
+    </nav>
+
+    <main id="transaction-list" class="list-container">
+        </main>
+
+    <button onclick="app.openModal('SAIDA')" class="fab"><span class="material-symbols-rounded">add</span></button>
+
+    <div id="modal" class="modal-overlay hidden">
+        <div class="modal-content" id="modal-content">
+            <div class="modal-header">
+                <h2>Novo Registro</h2>
+                <button onclick="app.closeModal()">&times;</button>
+            </div>
+
+            <form id="finance-form">
+                <div class="form-row">
+                    <select id="type" required>
+                        <option value="ENTRADA">Entrada (+)</option>
+                        <option value="SAIDA">Saída (-)</option>
+                        <option value="DIVIDA">Dívida Futura</option>
+                    </select>
+                    <select id="currency" required>
+                        <option value="PYG">Guarani (₲)</option>
+                        <option value="BRL">Real (R$)</option>
+                    </select>
+                </div>
+
+                <input type="number" id="amount" placeholder="0,00" step="0.01" class="input-amount" required>
+
+                <div class="form-group">
+                    <label>Comprovante (Foto)</label>
+                    <input type="file" id="file-input" accept="image/*" class="input-file">
+                </div>
+
+                <input type="text" id="origin" list="list-origins" placeholder="Origem (Ex: Congelados, Consulta)" required>
+                <datalist id="list-origins"></datalist>
+
+                <input type="text" id="wallet" list="list-wallets" placeholder="Onde está? (Ex: Wise, Efetivo)" required>
+                <datalist id="list-wallets"></datalist>
+
+                <textarea id="notes" placeholder="Observações (opcional)" rows="2"></textarea>
+
+                <select id="method">
+                    <option value="Efectivo">Efectivo</option>
+                    <option value="Pix">Pix</option>
+                    <option value="Cartão">Cartão</option>
+                    <option value="Transferência">Transferência</option>
+                </select>
+
+                <button type="submit" class="btn-submit">Salvar Registro</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

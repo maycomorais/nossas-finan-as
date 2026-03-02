@@ -1,0 +1,21 @@
+{
+  "short_name": "Finanças",
+  "name": "Controle Financeiro Morais",
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#4f46e5",
+  "background_color": "#ffffff",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2845/2845812.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/192/2845/2845812.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
