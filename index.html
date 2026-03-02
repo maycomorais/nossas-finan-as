@@ -54,8 +54,10 @@
             </div>
 
             <form id="finance-form">
+                <input type="hidden" id="tx-id" value="">
+
                 <div class="form-row">
-                    <select id="type" required>
+                    <select id="type" required onchange="app.toggleStatus()">
                         <option value="ENTRADA">Entrada (+)</option>
                         <option value="SAIDA">Saída (-)</option>
                         <option value="DIVIDA">Dívida Futura</option>
@@ -66,10 +68,18 @@
                     </select>
                 </div>
 
+                <select id="status" class="hidden" style="background-color: #fef08a;">
+                    <option value="PENDENTE">Pendente</option>
+                    <option value="PAGA">Paga</option>
+                    <option value="ATRASADA">Atrasada</option>
+                    <option value="NEGOCIADA">Negociada</option>
+                    <option value="CANCELADA">Cancelada</option>
+                </select>
+
                 <input type="number" id="amount" placeholder="0,00" step="0.01" class="input-amount" required>
 
                 <div class="form-group">
-                    <label>Comprovante (Foto)</label>
+                    <label>Comprovante (Nova Foto)</label>
                     <input type="file" id="file-input" accept="image/*" class="input-file">
                 </div>
 
@@ -88,7 +98,10 @@
                     <option value="Transferência">Transferência</option>
                 </select>
 
-                <button type="submit" class="btn-submit">Salvar Registro</button>
+                <div style="display: flex; gap: 10px; margin-top: 10px;">
+                    <button type="button" id="btn-delete" class="btn-delete hidden" onclick="app.deleteTx()">Excluir</button>
+                    <button type="submit" class="btn-submit" style="flex: 1; margin-top: 0;">Salvar</button>
+                </div>
             </form>
         </div>
     </div>
