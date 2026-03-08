@@ -1,493 +1,1015 @@
-const SB_URL = "https://alpyltplxrhrwxygkkar.supabase.co";
-const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFscHlsdHBseHJocnd4eWdra2FyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0Njg5NDUsImV4cCI6MjA4ODA0NDk0NX0.QjM7L6sxNB4-LN3_x-ijo3MoZrpgzgkO8E79UUD2vUk";
+/* ============================================================
+   FINANÇAS FAMÍLIA — script.js v3.1
+   Módulos: Config → ExchangeAPI → OfflineQueue → DB →
+            Calc → UIList → UITotals → UIDashboard →
+            UIDatalist → UIToast → UIConnStatus → UILoading →
+            Modal → FormHandler → App
+   ============================================================ */
 
-const _supabase = supabase.createClient(SB_URL, SB_KEY);
+'use strict';
 
-const app = {
+// ============================================================
+// CONFIG
+// ============================================================
+const Config = {
+    SB_URL:        'https://alpyltplxrhrwxygkkar.supabase.co',
+    SB_KEY:        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFscHlsdHBseHJocnd4eWdra2FyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0Njg5NDUsImV4cCI6MjA4ODA0NDk0NX0.QjM7L6sxNB4-LN3_x-ijo3MoZrpgzgkO8E79UUD2vUk',
+    EXCHANGE_URL:  'https://economia.awesomeapi.com.br/last/BRL-PYG',
+    FALLBACK_RATE: 1420,
+    OFFLINE_KEY:   'fm_offline_queue_v1',
+    MONEYGRAM_SPREAD: 0.0618,   // 6,18% de custo aplicado sobre cotação base
+    CHART_COLORS:  [
+        '#ef4444','#f97316','#eab308','#22c55e','#3b82f6',
+        '#8b5cf6','#ec4899','#14b8a6','#f43f5e','#6366f1',
+        '#84cc16','#0ea5e9','#a855f7','#fb923c','#34d399',
+    ],
+    INTL_METHODS: ['Wise', 'Moneygram', 'Transferência'],
+};
+
+const _sb = supabase.createClient(Config.SB_URL, Config.SB_KEY);
+
+// ============================================================
+// FORMATTERS
+// ============================================================
+const fmt = {
+    brl:   v => `R$ ${Math.abs(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    pyg:   v => `₲ ${Math.abs(v).toLocaleString('es-PY', { maximumFractionDigits: 0 })}`,
+    money: (v, moeda) => moeda === 'BRL' ? fmt.brl(v) : fmt.pyg(v),
+    date:  d => d ? d.split('-').reverse().join('/') : '—',
+    pct:   (v, t) => t > 0 ? ((v / t) * 100).toFixed(1) + '%' : '—',
+};
+
+// ============================================================
+// STATE
+// ============================================================
+const State = {
+    transactions:  [],
+    exchangeRate:  Config.FALLBACK_RATE,
     currentFilter: 'TUDO',
-    currentDashMoeda: 'BRL',
-    currentDashType: 'SAIDA', 
-    transactionsData: [],
-    charts: {}, 
-    exchangeRate: null,
+    dashMoeda:     'BRL',
+    dashType:      'SAIDA',
+    dashOrigin:    'TUDO',
+    charts:        {},
+    isOnline:      navigator.onLine,
+};
 
-    async init() {
-        this.setDefaultDate();
-        await this.fetchExchangeRate(); 
-        await this.fetchData();
-        this.setupForm();
+// ============================================================
+// EXCHANGE RATE API
+// ============================================================
+const ExchangeAPI = {
+    async fetch() {
+        try {
+            const res  = await fetch(Config.EXCHANGE_URL);
+            const data = await res.json();
+            const rate = parseFloat(data?.BRLPYG?.bid);
+            if (rate && rate > 0) {
+                State.exchangeRate = rate;
+                this._updateBadge();
+                return;
+            }
+        } catch (_) {}
+
+        try {
+            const res  = await fetch('https://open.er-api.com/v6/latest/BRL');
+            const data = await res.json();
+            if (data?.rates?.PYG) State.exchangeRate = data.rates.PYG * 0.98;
+        } catch (_) {
+            console.warn('ExchangeAPI: usando fallback', Config.FALLBACK_RATE);
+        }
+        this._updateBadge();
     },
 
-    async fetchExchangeRate() {
-        try {
-            const fallbackRes = await fetch('https://open.er-api.com/v6/latest/BRL');
-            const data = await fallbackRes.json();
-            this.exchangeRate = data.rates.PYG * 0.98; 
-        } catch (err) {
-            console.error("Erro ao buscar câmbio:", err);
-            this.exchangeRate = 1420; 
+    _updateBadge() {
+        const el = document.getElementById('cambio-valor');
+        if (el) el.textContent = `R$1 = ₲ ${State.exchangeRate.toFixed(0)}`;
+    },
+};
+
+// ============================================================
+// OFFLINE QUEUE
+// ============================================================
+const OfflineQueue = {
+    _key: Config.OFFLINE_KEY,
+
+    load() {
+        try { return JSON.parse(localStorage.getItem(this._key) || '[]'); }
+        catch (_) { return []; }
+    },
+
+    save(queue) {
+        localStorage.setItem(this._key, JSON.stringify(queue));
+        this._updateBanner();
+    },
+
+    enqueue(action, payloads) {
+        const q = this.load();
+        q.push({ _offlineId: crypto.randomUUID(), _queuedAt: new Date().toISOString(), action, payloads });
+        this.save(q);
+        UIToast.show('📶 Sem conexão — salvo localmente', 'warning');
+    },
+
+    count() { return this.load().length; },
+
+    _updateBanner() {
+        const n      = this.count();
+        const banner = document.getElementById('offline-banner');
+        const text   = document.getElementById('offline-banner-text');
+        if (!banner) return;
+        if (n > 0) {
+            if (text) text.textContent = `${n} operação(ões) aguardando sincronização — toque para sincronizar`;
+            banner.style.display = 'flex';
+        } else {
+            banner.style.display = 'none';
         }
     },
 
-    setDefaultDate() {
-        const now = new Date();
-        const month = String(now.getMonth() + 1).padStart(2, '0');
+    async drain() {
+        const queue = this.load();
+        if (!queue.length) return;
+        UIToast.show(`📶 Sincronizando ${queue.length} item(s)…`, 'info');
+        const failed = [];
+
+        for (const item of queue) {
+            let err = null;
+            try {
+                if (item.action === 'insert' || item.action === 'insertMany') {
+                    ({ error: err } = await _sb.from('transacoes').insert(item.payloads));
+                } else if (item.action === 'update') {
+                    ({ error: err } = await _sb.from('transacoes').update(item.payloads.payload).eq('id', item.payloads.id));
+                } else if (item.action === 'delete') {
+                    ({ error: err } = await _sb.from('transacoes').delete().eq('id', item.payloads.id));
+                }
+            } catch (e) { err = e; }
+            if (err) { console.error('Queue drain error:', item._offlineId, err); failed.push(item); }
+        }
+
+        this.save(failed);
+        if (!failed.length) {
+            UIToast.show('✅ Sincronização completa!', 'success');
+            app.fetchData();
+        } else {
+            UIToast.show(`⚠️ ${failed.length} item(s) não sincronizados`, 'danger');
+        }
+    },
+
+    init() {
+        this._updateBanner();
+        window.addEventListener('online', async () => {
+            State.isOnline = true;
+            UIConnStatus.update(true);
+            await this.drain();
+        });
+        window.addEventListener('offline', () => {
+            State.isOnline = false;
+            UIConnStatus.update(false);
+        });
+    },
+};
+
+// ============================================================
+// DB — Supabase + offline fallback
+// ============================================================
+const DB = {
+    async fetchMonth(year, month) {
+        if (!State.isOnline) { UIToast.show('Offline — sem novos dados', 'warning'); return []; }
+        const { data, error } = await _sb
+            .from('transacoes').select('*')
+            .gte('data', `${year}-${month}-01`)
+            .lte('data', `${year}-${month}-31`)
+            .order('data', { ascending: false });
+        if (error) { console.error('DB.fetchMonth:', error); UIToast.show('Erro ao buscar: ' + error.message, 'danger'); return []; }
+        return data || [];
+    },
+
+    async insert(payload) {
+        if (!State.isOnline) { OfflineQueue.enqueue('insert', [payload]); return null; }
+        const { error } = await _sb.from('transacoes').insert([payload]);
+        return error;
+    },
+
+    async insertMany(payloads) {
+        if (!State.isOnline) { OfflineQueue.enqueue('insertMany', payloads); return null; }
+        const { error } = await _sb.from('transacoes').insert(payloads);
+        return error;
+    },
+
+    async update(id, payload) {
+        if (!State.isOnline) { OfflineQueue.enqueue('update', { id, payload }); return null; }
+        const { error } = await _sb.from('transacoes').update(payload).eq('id', id);
+        return error;
+    },
+
+    async delete(id) {
+        if (!State.isOnline) { OfflineQueue.enqueue('delete', { id }); return null; }
+        const { error } = await _sb.from('transacoes').delete().eq('id', id);
+        return error;
+    },
+
+    async uploadFile(file) {
+        if (!State.isOnline) { UIToast.show('Offline — foto não enviada', 'warning'); return null; }
+        const name = `${Date.now()}-${Math.random().toString(36).slice(2)}.${file.name.split('.').pop()}`;
+        const { data } = await _sb.storage.from('comprovantes').upload(name, file);
+        if (!data) return null;
+        return _sb.storage.from('comprovantes').getPublicUrl(name).data?.publicUrl || null;
+    },
+};
+
+// ============================================================
+// CALC
+// ============================================================
+const Calc = {
+    txRate: t => t.taxa_cambio_dia || State.exchangeRate,
+
+    balance(txs, moeda, { onlyAvailable = true } = {}) {
+        return txs.filter(t => {
+            if (t.tipo === 'TRANSFERENCIA')                  return false;
+            if (t.tipo === 'DIVIDA' && t.status !== 'PAGA') return false;
+            if (onlyAvailable && t.is_reserva)              return false;
+            if (t.moeda !== moeda)                          return false;
+            return true;
+        }).reduce((acc, t) => acc + (t.tipo === 'ENTRADA' ? t.valor : -t.valor), 0);
+    },
+
+    balanceReserva: (txs, moeda) =>
+        txs.filter(t => t.tipo !== 'TRANSFERENCIA' && t.moeda === moeda && t.is_reserva)
+           .reduce((acc, t) => acc + (t.tipo === 'ENTRADA' ? t.valor : -t.valor), 0),
+
+    pl(txs, { tipo = null, moeda = null, origin = 'TUDO', convertAll = false } = {}) {
+        return txs.filter(t => {
+            if (t.tipo === 'TRANSFERENCIA')                       return false;
+            if (tipo   && t.tipo !== tipo)                        return false;
+            if (moeda  && t.moeda !== moeda)                      return false;
+            if (origin !== 'TUDO' && t.origem_destino !== origin) return false;
+            return true;
+        }).reduce((acc, t) => {
+            const v = convertAll && t.moeda === 'BRL' ? t.valor * this.txRate(t) : t.valor;
+            return acc + (t.tipo === 'ENTRADA' ? v : -v);
+        }, 0);
+    },
+
+    conciliacaoStats(txs) {
+        const r = txs.filter(t => t.tipo !== 'TRANSFERENCIA');
+        return { total: r.length, concil: r.filter(t => t.conciliado).length, pending: r.filter(t => !t.conciliado).length };
+    },
+};
+
+// ============================================================
+// UI — Toast
+// ============================================================
+const UIToast = {
+    _el: null,
+    init() { this._el = document.getElementById('toast-container'); },
+    show(msg, type = 'info', ms = 3500) {
+        if (!this._el) return;
+        const el = document.createElement('div');
+        el.className   = `toast toast--${type}`;
+        el.textContent = msg;
+        this._el.appendChild(el);
+        requestAnimationFrame(() => el.classList.add('toast--visible'));
+        setTimeout(() => { el.classList.remove('toast--visible'); setTimeout(() => el.remove(), 400); }, ms);
+    },
+};
+
+// ============================================================
+// UI — Connection dot
+// ============================================================
+const UIConnStatus = {
+    update(online) {
+        const el = document.getElementById('conn-dot');
+        if (el) { el.className = `conn-dot conn-dot--${online ? 'online' : 'offline'}`; el.title = online ? 'Online' : 'Offline'; }
+    },
+};
+
+// ============================================================
+// UI — Loading skeleton
+// ============================================================
+const UILoading = {
+    show() {
+        const el = document.getElementById('transaction-list');
+        if (!el) return;
+        el.innerHTML = Array.from({ length: 3 }, () => `
+            <div class="skeleton-card">
+                <div class="skeleton-header">
+                    <div class="skel skel--title"></div>
+                    <div class="skel skel--amount"></div>
+                </div>
+                <div class="skeleton-rows">
+                    ${Array.from({ length: 2 }, () => `
+                        <div class="skeleton-row">
+                            <div class="skel skel--icon"></div>
+                            <div class="skel skel--line"></div>
+                            <div class="skel skel--val"></div>
+                        </div>`).join('')}
+                </div>
+            </div>`).join('');
+    },
+};
+
+// ============================================================
+// UI — List
+// ============================================================
+const UIList = {
+    render(data) {
+        const list = document.getElementById('transaction-list');
+
+        if (!data.length) {
+            list.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-rounded">inbox</span>
+                    <p>Nenhuma movimentação no período</p>
+                </div>`;
+            return;
+        }
+
+        const stats      = Calc.conciliacaoStats(data);
+        const concBanner = stats.pending > 0
+            ? `<div class="concil-banner">
+                   <span class="material-symbols-rounded">fact_check</span>
+                   <span><strong>${stats.concil}</strong> de <strong>${stats.total}</strong> conciliados
+                         — <strong>${stats.pending}</strong> pendente(s)</span>
+               </div>` : '';
+
+        const groups = {};
+        data.forEach(t => {
+            const key = t.origem_destino || '(sem origem)';
+            if (!groups[key]) groups[key] = { items: [], brl: 0, pyg: 0 };
+            groups[key].items.push(t);
+            this._accumulate(groups[key], t);
+        });
+
+        list.innerHTML = concBanner + Object.keys(groups).map((k, i) => this._groupCard(k, groups[k], i)).join('');
+    },
+
+    _accumulate(g, t) {
+        if (t.tipo === 'TRANSFERENCIA') return;
+        const sign = State.currentFilter === 'TUDO'
+            ? (t.tipo === 'ENTRADA' ? 1 : t.tipo === 'SAIDA' ? -1 : 0) : 1;
+        if (t.moeda === 'BRL') g.brl += t.valor * sign;
+        if (t.moeda === 'PYG') g.pyg += t.valor * sign;
+    },
+
+    _groupCard(origem, g, idx) {
+        const isAll  = State.currentFilter === 'TUDO';
+        const brlStr = g.brl !== 0 ? `<span class="${g.brl > 0 && isAll ? 'text-success' : g.brl < 0 ? 'text-danger' : ''}">${fmt.brl(g.brl)}</span>` : '';
+        const pygStr = g.pyg !== 0 ? `<span class="${g.pyg > 0 && isAll ? 'text-success' : g.pyg < 0 ? 'text-danger' : ''}">${fmt.pyg(g.pyg)}</span>` : '';
+
+        return `
+        <div class="group-card">
+            <div class="group-header" onclick="app.toggleGroup(${idx})">
+                <div class="group-title">
+                    <span class="material-symbols-rounded" id="icon-group-${idx}"
+                          style="color:#94a3b8;transition:transform 0.25s;font-size:20px;">expand_more</span>
+                    ${this._esc(origem)}
+                </div>
+                <div class="group-total">${[brlStr, pygStr].filter(Boolean).join('<br>') || '—'}</div>
+            </div>
+            <div class="group-body" id="body-group-${idx}">
+                ${g.items.map(t => this._txItem(t)).join('')}
+            </div>
+        </div>`;
+    },
+
+    _txItem(t) {
+        const isTr = t.tipo === 'TRANSFERENCIA', isIn = t.tipo === 'ENTRADA',
+              isOut = t.tipo === 'SAIDA',         isDt = t.tipo === 'DIVIDA';
+        const iconCls = isTr ? 'transfer' : isIn ? 'in' : isOut ? 'out' : 'debt';
+        const iconSym = isTr ? '⇄' : isIn ? '↑' : isOut ? '↓' : '⏳';
+        const valCls  = isTr ? 'transfer' : isIn ? 'plus' : 'minus';
+        const sub     = [t.local_dinheiro, t.metodo, isTr && t.wallet_dest ? `→ ${t.wallet_dest}` : null, t.categoria].filter(Boolean).join(' · ');
+
+        const badges = [
+            t.total_parcelas > 1          ? `<span class="parcela-badge">${t.parcela_atual}/${t.total_parcelas}</span>` : '',
+            (isDt || t.status === 'PENDENTE') ? `<span class="status-badge status-${t.status || 'PENDENTE'}">${t.status || 'PENDENTE'}</span>` : '',
+            t.is_reserva                  ? `<span class="status-badge status-reserva">🐷 Caixinha</span>` : '',
+            t.conciliado                  ? `<span class="status-badge status-conciliado">✓ Conc.</span>` : '',
+            t.taxa_cambio_dia             ? `<span class="taxa-tag" title="Taxa histórica">₲${parseFloat(t.taxa_cambio_dia).toFixed(0)}</span>` : '',
+        ].join('');
+
+        const photo = t.comprovante_url
+            ? `<span class="material-symbols-rounded has-photo" onclick="window.open('${t.comprovante_url}')" title="Ver comprovante">image</span>` : '';
+
+        return `
+        <div class="tx-item ${t.conciliado ? 'tx-item--conciliado' : ''}">
+            <div class="tx-icon tx-icon--${iconCls}">${iconSym}</div>
+            <div class="card-info">
+                <div class="tx-title">${this._esc(t.origem_destino || '—')} ${photo}</div>
+                <div class="tx-sub">${this._esc(sub)}</div>
+                ${t.observacoes ? `<div class="tx-sub tx-obs">"${this._esc(t.observacoes)}"</div>` : ''}
+                <div class="tx-badges">${badges}</div>
+            </div>
+            <div class="card-value">
+                <div class="val ${valCls}">${fmt.money(t.valor, t.moeda)}</div>
+                <div class="tx-date">${fmt.date(t.data)}</div>
+            </div>
+            <button class="btn-edit-icon" onclick="app.editTx('${t.id}')" title="Editar">
+                <span class="material-symbols-rounded">edit</span>
+            </button>
+        </div>`;
+    },
+
+    _esc: s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
+};
+
+// ============================================================
+// UI — Totals
+// ============================================================
+const UITotals = {
+    update(txs) {
+        const taxa   = State.exchangeRate;
+        const brlD   = Calc.balance(txs, 'BRL', { onlyAvailable: true });
+        const pygD   = Calc.balance(txs, 'PYG', { onlyAvailable: true });
+        const brlR   = Calc.balanceReserva(txs, 'BRL');
+        const pygR   = Calc.balanceReserva(txs, 'PYG');
+        const total  = pygD + brlD * taxa;
+        const patrim = total + pygR + brlR * taxa;
+
+        this._anim('balance-brl',   fmt.brl(brlD));
+        this._anim('balance-pyg',   fmt.pyg(pygD));
+        this._anim('balance-total', fmt.pyg(total));
+
+        document.getElementById('balance-brl-reserva').textContent = brlR !== 0 ? `+ ${fmt.brl(brlR)} caixinha` : '';
+        const mgRate = taxa * (1 - Config.MONEYGRAM_SPREAD);
+        const mgEl   = document.getElementById('balance-brl-mg');
+        if (mgEl) mgEl.textContent = brlD !== 0 ? `≈ ${fmt.pyg(brlD * mgRate)} (MG)` : '';
+        document.getElementById('balance-pyg-reserva').textContent = pygR !== 0 ? `+ ${fmt.pyg(pygR)} caixinha` : '';
+        document.getElementById('balance-patrimonio').textContent  = `Patrimônio: ${fmt.pyg(patrim)}`;
+    },
+
+    _anim(id, value) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.style.cssText = 'opacity:.4;transform:translateY(4px);transition:opacity .2s,transform .2s';
+        requestAnimationFrame(() => { el.textContent = value; el.style.cssText = 'opacity:1;transform:translateY(0);transition:opacity .2s,transform .2s'; });
+    },
+};
+
+// ============================================================
+// UI — Dashboard
+// ============================================================
+const UIDashboard = {
+    update(txs) {
+        const origin   = State.dashOrigin;
+        const filtered = origin === 'TUDO' ? txs : txs.filter(t => t.origem_destino === origin);
+
+        const ent = Calc.pl(filtered, { tipo: 'ENTRADA', convertAll: true });
+        const sai = Calc.pl(filtered, { tipo: 'SAIDA',   convertAll: true });
+        const res = ent - sai;
+
+        document.getElementById('dash-total-entradas').textContent = fmt.pyg(ent);
+        document.getElementById('dash-total-saidas').textContent   = fmt.pyg(sai);
+        const resEl = document.getElementById('dash-resultado');
+        resEl.textContent = fmt.pyg(Math.abs(res));
+        resEl.style.color = res >= 0 ? 'var(--success)' : 'var(--danger)';
+
+        this._biggestExpense(filtered);
+        this._concilStats(filtered);
+        this._updateOriginSelect(txs);
+
+        ['brl','pyg','mix'].forEach(m =>
+            document.getElementById(`dash-btn-${m}`)?.classList.toggle('active', State.dashMoeda === m.toUpperCase()));
+        ['tudo','entrada','saida','divida'].forEach(t =>
+            document.getElementById(`dash-btn-${t}`)?.classList.toggle('active', State.dashType === t.toUpperCase()));
+
+        this._renderChart(filtered);
+    },
+
+    _biggestExpense(txs) {
+        const map = {};
+        txs.filter(t => t.tipo === 'SAIDA').forEach(t => {
+            const k = t.categoria || t.origem_destino || 'Outros';
+            map[k]  = (map[k] || 0) + (t.moeda === 'BRL' ? t.valor * Calc.txRate(t) : t.valor);
+        });
+        const entries = Object.entries(map);
+        if (!entries.length) { ['be-name','be-val','be-pct'].forEach(id => document.getElementById(id).textContent = '—'); return; }
+        const total       = entries.reduce((a, [, v]) => a + v, 0);
+        const [name, val] = entries.sort((a, b) => b[1] - a[1])[0];
+        document.getElementById('be-name').textContent = name;
+        document.getElementById('be-val').textContent  = fmt.pyg(val);
+        document.getElementById('be-pct').textContent  = fmt.pct(val, total);
+    },
+
+    _concilStats(txs) {
+        const el = document.getElementById('dash-concil-stats');
+        if (!el) return;
+        const s = Calc.conciliacaoStats(txs);
+        if (!s.total) { el.style.display = 'none'; return; }
+        const pct = Math.round((s.concil / s.total) * 100);
+        el.style.display = 'flex';
+        el.innerHTML = `
+            <div class="concil-stat-bar"><div class="concil-fill" style="width:${pct}%"></div></div>
+            <span class="concil-stat-text">
+                <strong>${s.concil}/${s.total}</strong> conciliados (${pct}%)
+                ${s.pending > 0 ? `— <span style="color:var(--warning)">${s.pending} pendente(s)</span>` : ''}
+            </span>`;
+    },
+
+    _updateOriginSelect(txs) {
+        const sel = document.getElementById('dash-filter-origin');
+        const ori = [...new Set(txs.map(t => t.origem_destino).filter(Boolean))].sort();
+        sel.innerHTML = `<option value="TUDO">Todas</option>` +
+            ori.map(o => `<option value="${o}" ${o === State.dashOrigin ? 'selected' : ''}>${o}</option>`).join('');
+    },
+
+    _renderChart(txs) {
+        const moeda = State.dashMoeda, tipo = State.dashType, colors = Config.CHART_COLORS;
+        let labels = [], chartData = [], title = '';
+
+        if (tipo === 'TUDO') {
+            labels    = ['Entradas (₲)', 'Despesas (₲)'];
+            chartData = [Calc.pl(txs, { tipo: 'ENTRADA', convertAll: true }), Calc.pl(txs, { tipo: 'SAIDA', convertAll: true })];
+            title     = 'Visão Global (Guaranis)';
+        } else {
+            const base = txs.filter(t => t.tipo !== 'TRANSFERENCIA' && t.tipo === tipo && (moeda === 'MIX' || t.moeda === moeda));
+            const gFn  = tipo === 'SAIDA' ? t => t.categoria || t.origem_destino || 'Outros' : t => t.origem_destino || 'Outros';
+            const map  = {};
+            base.forEach(t => { const k = gFn(t); map[k] = (map[k] || 0) + (moeda === 'MIX' && t.moeda === 'BRL' ? t.valor * Calc.txRate(t) : t.valor); });
+            labels    = Object.keys(map);
+            chartData = Object.values(map);
+            const tL  = tipo === 'ENTRADA' ? 'Receitas' : tipo === 'SAIDA' ? 'Despesas' : 'Dívidas';
+            const mL  = moeda === 'BRL' ? 'R$' : moeda === 'PYG' ? '₲' : '₲ (tudo)';
+            title     = `${tL} por ${tipo === 'SAIDA' ? 'Categoria' : 'Origem'} (${mL})`;
+        }
+
+        document.getElementById('chartOriginsTitle').textContent = title;
+        if (State.charts.expenses) State.charts.expenses.destroy();
+
+        State.charts.expenses = new Chart(document.getElementById('chartExpenses').getContext('2d'), {
+            type: 'doughnut',
+            data: { labels, datasets: [{ data: chartData, backgroundColor: colors, borderWidth: 3, borderColor: '#fff', hoverOffset: 6 }] },
+            options: {
+                responsive: true, cutout: '60%',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${(moeda === 'MIX' || tipo === 'TUDO') ? fmt.pyg(ctx.parsed) : fmt.money(ctx.parsed, moeda)}` } },
+                },
+            },
+        });
+
+        const total    = chartData.reduce((a, b) => a + b, 0);
+        const isMix    = moeda === 'MIX' || tipo === 'TUDO';
+        const legendEl = document.getElementById('chart-legend');
+
+        if (!chartData.length) { legendEl.innerHTML = `<div style="text-align:center;color:#94a3b8;padding:10px;">Sem dados</div>`; return; }
+
+        legendEl.innerHTML = labels
+            .map((l, i) => ({ l, v: chartData[i], c: colors[i % colors.length] }))
+            .sort((a, b) => b.v - a.v)
+            .map(({ l, v, c }) => `
+            <div class="legend-item">
+                <div class="legend-left"><div class="legend-color" style="background:${c}"></div><span>${l}</span></div>
+                <div style="text-align:right;">
+                    <div class="legend-val">${isMix ? fmt.pyg(v) : fmt.money(v, moeda)}</div>
+                    <div style="font-size:0.7rem;color:#94a3b8;">${fmt.pct(v, total)}</div>
+                </div>
+            </div>`).join('');
+    },
+};
+
+// ============================================================
+// UI — Datalists
+// ============================================================
+const UIDatalist = {
+    update(txs) {
+        const fill = (id, items) => { const el = document.getElementById(id); if (el) el.innerHTML = items.map(v => `<option value="${v}">`).join(''); };
+        fill('list-wallets',      [...new Set(txs.map(t => t.local_dinheiro).filter(Boolean))]);
+        fill('list-wallets-dest', [...new Set(txs.map(t => t.local_dinheiro).filter(Boolean))]);
+    },
+};
+
+// ============================================================
+// MODAL
+// ============================================================
+const Modal = {
+    open(defaultType = 'SAIDA') {
+        document.getElementById('finance-form').reset();
+        document.getElementById('tx-id').value               = '';
+        document.getElementById('tx-transfer-pair-id').value = '';
+        document.getElementById('type').value                = defaultType;
+        document.getElementById('tx-date').value             = new Date().toISOString().split('T')[0];
+        document.getElementById('parcela-atual').value       = '1';
+        document.getElementById('total-parcelas').value      = '1';
+        document.getElementById('btn-delete').classList.add('hidden');
+        document.getElementById('modal-title').textContent   = 'Novo Registro';
+        this.onTypeChange();
+        this._show();
+    },
+
+    close() {
+        document.getElementById('modal-content').classList.remove('active');
+        setTimeout(() => document.getElementById('modal').classList.add('hidden'), 320);
+    },
+
+    _show() {
+        document.getElementById('modal').classList.remove('hidden');
+        setTimeout(() => document.getElementById('modal-content').classList.add('active'), 30);
+    },
+
+    _sf(id, v) { const el = document.getElementById(id); if (el) el.style.display = v ? '' : 'none'; },
+
+    onTypeChange() {
+        const t = document.getElementById('type').value;
+        const isTr = t === 'TRANSFERENCIA', isDt = t === 'DIVIDA',
+              isIn = t === 'ENTRADA',        isOut = t === 'SAIDA';
+
+        this._sf('field-status',     isDt);
+        this._sf('transfer-fields',  isTr);
+        this._sf('field-origem',     isIn || isDt || isTr);
+        this._sf('field-categoria',  isOut);
+        this._sf('field-tipo-divida', isDt);
+        this._sf('field-parcelas',   isOut || isDt);
+        this._sf('field-reserva',    isIn);
+
+        if (!isDt) document.getElementById('status').value = 'CONCLUIDO';
+        if (!isIn) document.getElementById('is-reserva').checked = false;
+
+        this.onMethodChange();
+    },
+
+    onCurrencyChange() {
+        this.onMethodChange();
+        this._updateRatePreview();
+    },
+
+    onMethodChange() {
+        const method = document.getElementById('method').value;
+        const tipo   = document.getElementById('type').value;
+        const isWise = method === 'Wise';
+        const isMG   = method === 'Moneygram';
+        const showRemessa = (isWise || isMG) && (tipo === 'TRANSFERENCIA' || tipo === 'SAIDA');
+
+        this._sf('remessa-block', showRemessa);
+        this._sf('btn-fetch-wise', isWise && showRemessa);
+
+        if (showRemessa) {
+            const lbl = document.getElementById('remessa-label');
+            if (lbl) lbl.textContent = isWise ? '🏦 Wise — cotação automática' : '💸 Moneygram — spread 4,2%';
+            if (isMG) this._calcMoneygram();
+        }
+    },
+
+    onOrigemChange() {
+        const sel   = document.getElementById('origem-select');
+        const outro = document.getElementById('origem-outro');
+        if (!sel || !outro) return;
+        outro.style.display = sel.value === 'Outro' ? '' : 'none';
+        if (sel.value !== 'Outro') outro.value = '';
+    },
+
+    onCategoriaChange() {
+        const sel   = document.getElementById('categoria');
+        const outro = document.getElementById('categoria-outro');
+        if (!sel || !outro) return;
+        outro.style.display = sel.value === 'Outro' ? '' : 'none';
+        if (sel.value !== 'Outro') outro.value = '';
+    },
+
+    _calcMoneygram() {
+        const v    = parseFloat(document.getElementById('amount').value) || 0;
+        const rate = State.exchangeRate;
+        if (v <= 0 || !rate) return;
+        const spread    = Config.MONEYGRAM_SPREAD;
+        const resultado = Math.round(v * rate * (1 - spread));
+        const taxa      = v * rate * spread;
+        const vcEl      = document.getElementById('valor-convertido');
+        const trEl      = document.getElementById('taxa-real');
+        if (vcEl) vcEl.value = resultado;
+        if (trEl) trEl.value = taxa.toFixed(2);
+        this._updateRatePreview();
+    },
+
+    async fetchWiseQuote() {
+        const v = parseFloat(document.getElementById('amount').value) || 0;
+        if (v <= 0) { UIToast.show('Informe o valor antes de buscar cotação Wise.', 'warning'); return; }
+
+        const btn = document.getElementById('btn-fetch-wise');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Buscando…'; }
+
+        try {
+            const res = await fetch(`${Config.SB_URL}/functions/v1/get-wise-quote`, {
+                method:  'POST',
+                headers: {
+                    'Content-Type':  'application/json',
+                    'Authorization': `Bearer ${Config.SB_KEY}`,
+                },
+                body: JSON.stringify({ sourceAmount: v, sourceCurrency: 'BRL', targetCurrency: 'PYG' }),
+            });
+
+            const data = await res.json();
+            if (data.error) throw new Error(data.error);
+
+            const vcEl = document.getElementById('valor-convertido');
+            const trEl = document.getElementById('taxa-real');
+            if (vcEl) vcEl.value = Math.round(data.targetAmount);
+            if (trEl) trEl.value = (data.fee || 0).toFixed(2);
+            this._updateRatePreview();
+            UIToast.show(`✅ Wise: ₲ ${Math.round(data.targetAmount).toLocaleString('es-PY')} (taxa: R$ ${(data.fee || 0).toFixed(2)})`, 'success', 5000);
+        } catch (err) {
+            UIToast.show('Erro Wise: ' + err.message, 'danger', 6000);
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = '🔄 Atualizar'; }
+        }
+    },
+
+    onParcelasChange() {
+        const n = parseInt(document.getElementById('total-parcelas').value) || 1;
+        const v = parseFloat(document.getElementById('amount').value) || 0;
+        const d = document.getElementById('tx-date').value;
+        const pre = document.getElementById('parcelas-preview');
+        if (n <= 1) { pre.style.display = 'none'; return; }
+        const [y, m, dd] = d ? d.split('-').map(Number) : [0, 0, 0];
+        let html = `<strong>${n}x de ${v > 0 ? fmt.brl(v) : '—'}</strong><br>`;
+        for (let i = 0; i < Math.min(n, 5); i++) {
+            const mi = (m - 1 + i) % 12, yi = Math.floor((m - 1 + i) / 12);
+            html += `• ${i + 1}ª: ${String(dd).padStart(2,'0')}/${String(mi + 1).padStart(2,'0')}/${y + yi}<br>`;
+        }
+        if (n > 5) html += `… até a ${n}ª parcela`;
+        pre.style.display = 'block';
+        pre.innerHTML     = html;
+    },
+
+    _updateRatePreview() {
+        const vc = parseFloat(document.getElementById('valor-convertido').value);
+        const v  = parseFloat(document.getElementById('amount').value);
+        const el = document.getElementById('rate-preview');
+        if (el && vc > 0 && v > 0) {
+            el.style.display = 'block';
+            el.textContent   = `Cotação efetiva: R$ 1 = ₲ ${(vc / v).toFixed(0)} (API: ₲ ${State.exchangeRate.toFixed(0)})`;
+        } else if (el) {
+            el.style.display = 'none';
+        }
+    },
+
+    populate(t) {
+        const sv = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+        sv('tx-id', t.id); sv('type', t.tipo); sv('currency', t.moeda); sv('amount', t.valor);
+        sv('tx-date', t.data); sv('wallet', t.local_dinheiro || '');
+        sv('method', t.metodo || 'Efectivo'); sv('notes', t.observacoes || ''); sv('status', t.status || 'CONCLUIDO');
+        sv('parcela-atual', t.parcela_atual || 1); sv('total-parcelas', t.total_parcelas || 1);
+        sv('wallet-dest', t.wallet_dest || ''); sv('currency-dest', t.moeda_dest || 'PYG');
+        sv('taxa-real', t.taxa_real || ''); sv('valor-convertido', t.valor_convertido || '');
+        sv('tx-transfer-pair-id', t.transferencia_id || '');
+
+        // Restore Origem dropdown + "Outro" fallback
+        const origemSel = document.getElementById('origem-select');
+        const origemOutro = document.getElementById('origem-outro');
+        if (origemSel) {
+            const savedSel = t.origem_select || '';
+            const opts = [...origemSel.options].map(o => o.value);
+            if (savedSel && opts.includes(savedSel)) {
+                origemSel.value = savedSel;
+                if (savedSel === 'Outro' && origemOutro) {
+                    origemOutro.style.display = '';
+                    origemOutro.value = t.origem_destino || '';
+                }
+            } else if (t.origem_destino) {
+                // Legacy: no dropdown record saved — put value as Outro
+                origemSel.value = 'Outro';
+                if (origemOutro) { origemOutro.style.display = ''; origemOutro.value = t.origem_destino; }
+            }
+        }
+
+        // Restore Categoria dropdown + "Outro" fallback
+        const catSel = document.getElementById('categoria');
+        const catOutro = document.getElementById('categoria-outro');
+        if (catSel) {
+            const savedCat = t.categoria_select || t.categoria || '';
+            const catOpts  = [...catSel.options].map(o => o.value);
+            if (savedCat && catOpts.includes(savedCat)) {
+                catSel.value = savedCat;
+                if (savedCat === 'Outro' && catOutro) {
+                    catOutro.style.display = '';
+                    catOutro.value = t.categoria || '';
+                }
+            } else if (t.categoria) {
+                catSel.value = 'Outro';
+                if (catOutro) { catOutro.style.display = ''; catOutro.value = t.categoria; }
+            }
+        }
+
+        // Tipo dívida
+        sv('tipo-divida', t.tipo_divida || 'FIXA_MENSAL');
+
+        document.getElementById('is-reserva').checked = !!t.is_reserva;
+        document.getElementById('conciliado').checked  = !!t.conciliado;
+        this.onTypeChange();
+        document.getElementById('btn-delete').classList.remove('hidden');
+        document.getElementById('modal-title').textContent = 'Editar Registro';
+        this._show();
+    },
+};
+
+// ============================================================
+// FORM HANDLER
+// ============================================================
+const FormHandler = {
+    setup() {
+        document.getElementById('finance-form').onsubmit = async e => {
+            e.preventDefault();
+            const btn     = e.target.querySelector('.btn-submit');
+            btn.disabled  = true;
+            btn.innerHTML = '<span class="material-symbols-rounded spin">progress_activity</span> Salvando…';
+            await this._save();
+            btn.disabled  = false;
+            btn.innerHTML = '<span class="material-symbols-rounded">save</span> Salvar';
+        };
+        document.getElementById('valor-convertido')?.addEventListener('input', () => Modal._updateRatePreview());
+        document.getElementById('amount')?.addEventListener('input', () => {
+            Modal.onParcelasChange();
+            Modal._updateRatePreview();
+            const method = document.getElementById('method')?.value;
+            if (method === 'Moneygram') Modal._calcMoneygram();
+        });
+    },
+
+    async _save() {
+        const txId = document.getElementById('tx-id').value;
+        const tipo = document.getElementById('type').value;
+        const file = document.getElementById('file-input').files[0];
+        const url  = file ? await DB.uploadFile(file) : null;
+        const base = this._payload();
+        if (url) base.comprovante_url = url;
+
+        const err = txId                    ? await DB.update(txId, base)
+                  : tipo === 'TRANSFERENCIA' ? await this._saveTransfer(base)
+                  : await this._saveInstallments(base);
+
+        if (err) { UIToast.show('Erro: ' + err.message, 'danger', 5000); return; }
+        if (State.isOnline) UIToast.show('✅ Salvo!', 'success');
+        Modal.close();
+        if (State.isOnline) app.fetchData();
+    },
+
+    _payload() {
+        const tipo = document.getElementById('type').value;
+
+        // ── Origem (ENTRADA / DIVIDA / TRANSFERENCIA) ─────────
+        const origemSel   = document.getElementById('origem-select')?.value  || '';
+        const origemOutro = document.getElementById('origem-outro')?.value   || '';
+        const origemVal   = origemSel === 'Outro' ? origemOutro : origemSel;
+
+        // ── Categoria (SAIDA) ─────────────────────────────────
+        const catSel   = document.getElementById('categoria')?.value   || '';
+        const catOutro = document.getElementById('categoria-outro')?.value || '';
+        const catVal   = catSel === 'Outro' ? catOutro : catSel;
+
+        const origemDestino = tipo === 'SAIDA' ? catVal : origemVal;
+
+        return {
+            tipo,
+            moeda:            document.getElementById('currency').value,
+            valor:            parseFloat(document.getElementById('amount').value),
+            origem_destino:   origemDestino,
+            local_dinheiro:   document.getElementById('wallet').value,
+            metodo:           document.getElementById('method').value,
+            observacoes:      document.getElementById('notes').value || null,
+            status:           document.getElementById('status').value || 'CONCLUIDO',
+            data:             document.getElementById('tx-date').value,
+            categoria:        catVal || null,
+            categoria_select: catSel || null,
+            origem_select:    origemSel || null,
+            tipo_divida:      tipo === 'DIVIDA' ? (document.getElementById('tipo-divida')?.value || null) : null,
+            parcela_atual:    parseInt(document.getElementById('parcela-atual').value) || 1,
+            total_parcelas:   parseInt(document.getElementById('total-parcelas').value) || 1,
+            is_reserva:       document.getElementById('is-reserva').checked,
+            conciliado:       document.getElementById('conciliado').checked,
+            taxa_cambio_dia:  State.exchangeRate,
+            taxa_real:        parseFloat(document.getElementById('taxa-real').value) || null,
+            valor_convertido: parseFloat(document.getElementById('valor-convertido').value) || null,
+        };
+    },
+
+    async _saveInstallments(base) {
+        if (base.total_parcelas <= 1) return await DB.insert(base);
+        const [y, m, d] = base.data.split('-').map(Number);
+        return await DB.insertMany(Array.from({ length: base.total_parcelas }, (_, i) => {
+            const mi = (m - 1 + i) % 12, yi = Math.floor((m - 1 + i) / 12);
+            return { ...base, parcela_atual: i + 1, data: `${y + yi}-${String(mi + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`, status: i === 0 ? (base.status || 'CONCLUIDO') : 'PENDENTE' };
+        }));
+    },
+
+    async _saveTransfer(base) {
+        const pid = crypto.randomUUID();
+        const wDest = document.getElementById('wallet-dest').value;
+        const mDest = document.getElementById('currency-dest').value;
+        const vc    = parseFloat(document.getElementById('valor-convertido').value);
+        return await DB.insertMany([
+            { ...base, tipo: 'TRANSFERENCIA', status: 'CONCLUIDO', transferencia_id: pid, wallet_dest: wDest, moeda_dest: mDest },
+            { tipo: 'TRANSFERENCIA', moeda: mDest, valor: vc > 0 ? vc : base.valor,
+              origem_destino: `De: ${base.local_dinheiro}`, local_dinheiro: wDest,
+              metodo: base.metodo, observacoes: base.observacoes, status: 'CONCLUIDO',
+              data: base.data, transferencia_id: pid, taxa_cambio_dia: base.taxa_cambio_dia,
+              taxa_real: base.taxa_real, valor_convertido: vc || null,
+              is_reserva: false, conciliado: false, parcela_atual: 1, total_parcelas: 1 },
+        ]);
+    },
+};
+
+// ============================================================
+// APP
+// ============================================================
+const app = {
+    async init() {
+        UIToast.init();
+        UIConnStatus.update(navigator.onLine);
+        OfflineQueue.init();
+        this._setDefaultDate();
+        UILoading.show();
+        await ExchangeAPI.fetch();
+        await this.fetchData();
+        FormHandler.setup();
+        this._registerSW();
+    },
+
+    _setDefaultDate() {
+        const now   = new Date();
         const input = document.getElementById('filter-month');
-        input.value = `${now.getFullYear()}-${month}`;
+        input.value    = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         input.onchange = () => this.fetchData();
     },
 
     async fetchData() {
-        const monthVal = document.getElementById('filter-month').value;
-        if (!monthVal) return;
-        
-        const [year, month] = monthVal.split('-');
-        const start = `${year}-${month}-01`;
-        const end = `${year}-${month}-31`;
-
-        const { data, error } = await _supabase.from('transacoes')
-            .select('*')
-            .gte('data', start)
-            .lte('data', end)
-            .order('data', { ascending: false });
-
-        if (!error) {
-            this.transactionsData = data || []; 
-            this.updateTotals(this.transactionsData);
-            this.updateDatalists(this.transactionsData);
-            
-            this.applyListFilter();
-            
-            if(document.getElementById('view-dashboard').classList.contains('active-view')) {
-                this.renderDashboard();
-            }
-        } else {
-            console.error("Erro ao buscar dados:", error);
+        const [year, month] = document.getElementById('filter-month').value.split('-');
+        if (!year) return;
+        State.transactions = await DB.fetchMonth(year, month);
+        UITotals.update(State.transactions);
+        UIDatalist.update(State.transactions);
+        this._applyListFilter();
+        if (document.getElementById('view-dashboard').classList.contains('active-view')) {
+            UIDashboard.update(State.transactions);
         }
     },
 
-    applyListFilter() {
-        let filtered = this.transactionsData;
-        if (this.currentFilter !== 'TUDO') {
-            filtered = this.transactionsData.filter(t => t.tipo === this.currentFilter);
-        }
-        this.renderGrouped(filtered);
+    _applyListFilter() {
+        let data = State.transactions;
+        if (State.currentFilter !== 'TUDO') data = data.filter(t => t.tipo === State.currentFilter);
+        UIList.render(data);
     },
 
-    updateTotals(data) {
-        const validos = data.filter(t => t.tipo !== 'DIVIDA' || t.status === 'PAGA');
-        
-        const brlPuro = validos.filter(t => t.moeda === 'BRL').reduce((acc, t) => acc + (t.tipo === 'ENTRADA' ? t.valor : -t.valor), 0);
-        const pygPuro = validos.filter(t => t.moeda === 'PYG').reduce((acc, t) => acc + (t.tipo === 'ENTRADA' ? t.valor : -t.valor), 0);
-        
-        const taxa = this.exchangeRate || 1420;
-        const brlConvertidoEmPyg = brlPuro * taxa;
-        
-        const saldoTotalGuarani = pygPuro + brlConvertidoEmPyg;
-
-        document.getElementById('balance-brl').innerText = `R$ ${brlPuro.toLocaleString('pt-BR', {minimumFractionDigits: 2})}`;
-        
-        const brlSubInfo = document.getElementById('brl-in-pyg');
-        if (brlPuro === 0) {
-            brlSubInfo.style.display = 'none';
-        } else {
-            brlSubInfo.style.display = 'block';
-            brlSubInfo.innerText = `≈ ₲ ${brlConvertidoEmPyg.toLocaleString('es-PY', {maximumFractionDigits: 0})}`;
-        }
-        
-        document.getElementById('balance-pyg').innerText = `₲ ${saldoTotalGuarani.toLocaleString('es-PY', {maximumFractionDigits: 0})}`;
-        document.getElementById('cambio-dia-texto').innerText = `Câmbio: R$ 1 = ₲ ${taxa.toFixed(0)}`;
+    switchTab(tab, btnEl) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btnEl.classList.add('active');
+        const isList = tab === 'lista';
+        document.getElementById('view-lista').classList.toggle('active-view', isList);
+        document.getElementById('view-lista').classList.toggle('hidden-view', !isList);
+        document.getElementById('view-dashboard').classList.toggle('active-view', !isList);
+        document.getElementById('view-dashboard').classList.toggle('hidden-view', isList);
+        if (!isList) UIDashboard.update(State.transactions);
     },
 
-    updateDatalists(data) {
-        const origins = [...new Set(data.map(t => t.origem_destino))];
-        const wallets = [...new Set(data.map(t => t.local_dinheiro))];
-        document.getElementById('list-origins').innerHTML = origins.map(o => `<option value="${o}">`).join('');
-        document.getElementById('list-wallets').innerHTML = wallets.map(w => `<option value="${w}">`).join('');
-    },
-
-    async setupForm() {
-        document.getElementById('finance-form').onsubmit = async (e) => {
-            e.preventDefault();
-            const btn = e.target.querySelector('.btn-submit');
-            btn.disabled = true;
-            btn.innerText = "Salvando...";
-
-            let imageUrl = null;
-            const file = document.getElementById('file-input').files[0];
-            const txId = document.getElementById('tx-id').value;
-
-            if (file) {
-                const fileExt = file.name.split('.').pop();
-                const fileName = `${Math.random()}.${fileExt}`;
-                const { data } = await _supabase.storage.from('comprovantes').upload(fileName, file);
-                if (data) {
-                    const { data: urlData } = _supabase.storage.from('comprovantes').getPublicUrl(fileName);
-                    imageUrl = urlData.publicUrl;
-                }
-            }
-
-            const payload = {
-                tipo: document.getElementById('type').value,
-                moeda: document.getElementById('currency').value,
-                valor: parseFloat(document.getElementById('amount').value),
-                origem_destino: document.getElementById('origin').value,
-                local_dinheiro: document.getElementById('wallet').value,
-                metodo: document.getElementById('method').value,
-                observacoes: document.getElementById('notes').value,
-                status: document.getElementById('status').value || 'CONCLUIDO',
-                data: document.getElementById('tx-date').value
-            };
-
-            if (imageUrl) payload.comprovante_url = imageUrl;
-
-            let error;
-            if (txId) {
-                const res = await _supabase.from('transacoes').update(payload).eq('id', txId);
-                error = res.error;
-            } else {
-                const res = await _supabase.from('transacoes').insert([payload]);
-                error = res.error;
-            }
-            
-            if (!error) {
-                this.closeModal();
-                this.fetchData();
-            } else {
-                alert("Erro ao salvar: " + error.message);
-            }
-            btn.disabled = false;
-            btn.innerText = "Salvar";
-        };
-    },
-
-    async deleteTx() {
-        const txId = document.getElementById('tx-id').value;
-        if (!txId) return;
-
-        if(confirm("Tem certeza que deseja excluir este registro definitivamente?")) {
-            const { error } = await _supabase.from('transacoes').delete().eq('id', txId);
-            if(!error) {
-                this.closeModal();
-                this.fetchData();
-            } else {
-                alert("Erro ao excluir: " + error.message);
-            }
-        }
-    },
-
-    /* ======== RENDERIZAÇÃO DA LISTA EM ACCORDION ======== */
-    renderGrouped(data) {
-        const list = document.getElementById('transaction-list');
-        if (data.length === 0) {
-            list.innerHTML = `<div style="text-align:center; padding: 20px; color: #94a3b8;">Nenhuma movimentação no período.</div>`;
-            return;
-        }
-
-        // Agrupando por Origem
-        const groups = {};
-        data.forEach(t => {
-            const key = t.origem_destino;
-            if (!groups[key]) groups[key] = { items: [], brl: 0, pyg: 0 };
-            groups[key].items.push(t);
-            
-            // Lógica do Saldo do Cabeçalho
-            if (this.currentFilter === 'TUDO') {
-                // Se for "Tudo", mostramos o saldo LÍQUIDO daquela origem
-                let val = t.valor;
-                if (t.tipo === 'SAIDA') val = -t.valor;
-                if (t.tipo === 'DIVIDA') val = 0; // Ignora dívidas pendentes no líquido para não confundir
-                
-                if (t.moeda === 'BRL') groups[key].brl += val;
-                if (t.moeda === 'PYG') groups[key].pyg += val;
-            } else {
-                // Se filtrou um tipo específico, apenas soma o valor absoluto do que está vendo
-                if (t.moeda === 'BRL') groups[key].brl += t.valor;
-                if (t.moeda === 'PYG') groups[key].pyg += t.valor;
-            }
-        });
-
-        // Desenhando o HTML Sanfona
-        list.innerHTML = Object.keys(groups).map((origem, index) => {
-            const g = groups[origem];
-            
-            // Formata os totais do cabeçalho
-            let totalStr = [];
-            if (g.brl !== 0) totalStr.push(`<span class="${g.brl > 0 && this.currentFilter==='TUDO' ? 'text-success' : g.brl < 0 ? 'text-danger' : ''}">R$ ${Math.abs(g.brl).toLocaleString('pt-BR', {minimumFractionDigits:2})}</span>`);
-            if (g.pyg !== 0) totalStr.push(`<span class="${g.pyg > 0 && this.currentFilter==='TUDO' ? 'text-success' : g.pyg < 0 ? 'text-danger' : ''}">₲ ${Math.abs(g.pyg).toLocaleString('es-PY')}</span>`);
-            if (totalStr.length === 0) totalStr.push('0');
-
-            // Formata os itens internos
-            const itemsHtml = g.items.map(t => {
-                const isEntrada = t.tipo === 'ENTRADA';
-                const isSaida = t.tipo === 'SAIDA';
-                return `
-                <div class="tx-item">
-                    <div class="card-info">
-                        <div style="display:flex; align-items:center; gap:6px;">
-                            <span style="font-size:0.9rem; font-weight:bold; color: ${isEntrada ? 'var(--success)' : (isSaida ? 'var(--danger)' : '#eab308')}">${isEntrada ? '↑' : (isSaida ? '↓' : '⏳')}</span>
-                            <h4 style="font-size:0.85rem; margin:0;">${t.local_dinheiro} • ${t.metodo}</h4>
-                            ${t.comprovante_url ? `<span class="material-symbols-rounded has-photo" onclick="window.open('${t.comprovante_url}')" style="font-size:16px;">image</span>` : ''}
-                        </div>
-                        ${t.observacoes ? `<p style="font-size:0.7rem; font-style:italic; margin-top:2px; color: #94a3b8;">"${t.observacoes}"</p>` : ''}
-                        ${t.tipo === 'DIVIDA' ? `<span class="status-badge status-${t.status || 'PENDENTE'}" style="font-size:0.55rem; padding:2px 4px;">${t.status || 'PENDENTE'}</span>` : ''}
-                    </div>
-                    <div class="card-value">
-                        <div class="val ${isEntrada ? 'plus' : ''}" style="font-size:0.85rem;">
-                            ${t.moeda === 'BRL' ? 'R$ ' : '₲ '}${t.valor.toLocaleString(t.moeda === 'BRL' ? 'pt-BR' : 'es-PY')}
-                        </div>
-                        <div class="date" style="font-size:0.65rem;">${t.data.split('-').reverse().join('/')}</div>
-                    </div>
-                    <button class="btn-edit-icon" onclick="app.editTx('${t.id}')">
-                        <span class="material-symbols-rounded" style="font-size:18px;">edit</span>
-                    </button>
-                </div>
-            `}).join('');
-
-            return `
-                <div class="group-card">
-                    <div class="group-header" onclick="app.toggleGroup(${index})">
-                        <div class="group-title">
-                            <span class="material-symbols-rounded" id="icon-group-${index}" style="color:#64748b; transition:0.3s;">expand_more</span>
-                            ${origem}
-                        </div>
-                        <div class="group-total">
-                            ${totalStr.join('<br>')}
-                        </div>
-                    </div>
-                    <div class="group-body" id="body-group-${index}">
-                        ${itemsHtml}
-                    </div>
-                </div>
-            `;
-        }).join('');
+    filterType(type, btnEl) {
+        State.currentFilter = type;
+        document.querySelectorAll('.filter-bar .chip').forEach(c => c.classList.remove('active'));
+        btnEl.classList.add('active');
+        this._applyListFilter();
     },
 
     toggleGroup(idx) {
         const body = document.getElementById(`body-group-${idx}`);
         const icon = document.getElementById(`icon-group-${idx}`);
-        if (body.classList.contains('expanded')) {
-            body.classList.remove('expanded');
-            icon.style.transform = 'rotate(0deg)';
-        } else {
-            body.classList.add('expanded');
-            icon.style.transform = 'rotate(180deg)';
-        }
+        const open = body.classList.toggle('expanded');
+        icon.style.transform = open ? 'rotate(180deg)' : '';
     },
 
-    switchTab(tab, btnElement) {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        btnElement.classList.add('active');
+    openModal(t)           { Modal.open(t); },
+    closeModal()           { Modal.close(); },
+    editTx(id)             { const t = State.transactions.find(x => x.id === id); if (t) Modal.populate(t); },
+    onTypeChange()         { Modal.onTypeChange(); },
+    onCurrencyChange()     { Modal.onCurrencyChange(); },
+    onParcelasChange()     { Modal.onParcelasChange(); },
+    onMethodChange()       { Modal.onMethodChange(); },
+    onOrigemChange()       { Modal.onOrigemChange(); },
+    onCategoriaChange()    { Modal.onCategoriaChange(); },
+    onValorConvertidoChange() { Modal._updateRatePreview(); },
+    fetchWiseQuote()       { return Modal.fetchWiseQuote(); },
 
-        if (tab === 'lista') {
-            document.getElementById('view-lista').classList.remove('hidden-view');
-            document.getElementById('view-lista').classList.add('active-view');
-            document.getElementById('view-dashboard').classList.add('hidden-view');
-            document.getElementById('view-dashboard').classList.remove('active-view');
-        } else {
-            document.getElementById('view-lista').classList.add('hidden-view');
-            document.getElementById('view-lista').classList.remove('active-view');
-            document.getElementById('view-dashboard').classList.remove('hidden-view');
-            document.getElementById('view-dashboard').classList.add('active-view');
-            this.renderDashboard(); 
-        }
+    async deleteTx() {
+        const id = document.getElementById('tx-id').value;
+        if (!id || !confirm('Excluir este registro definitivamente?')) return;
+        const err = await DB.delete(id);
+        if (err) { UIToast.show('Erro: ' + err.message, 'danger'); return; }
+        Modal.close();
+        if (State.isOnline) this.fetchData();
     },
 
-    filterType(type, btnElement) {
-        this.currentFilter = type;
-        document.querySelectorAll('.filter-bar .chip').forEach(c => c.classList.remove('active'));
-        btnElement.classList.add('active');
-        this.applyListFilter();
-    },
+    setDashMoeda(m)   { State.dashMoeda  = m; UIDashboard.update(State.transactions); },
+    setDashType(t)    { State.dashType   = t; UIDashboard.update(State.transactions); },
+    renderDashboard() { State.dashOrigin = document.getElementById('dash-filter-origin').value; UIDashboard.update(State.transactions); },
 
-    toggleStatus() {
-        const tipo = document.getElementById('type').value;
-        const statusEl = document.getElementById('status');
-        if (tipo === 'DIVIDA') {
-            statusEl.classList.remove('hidden');
-        } else {
-            statusEl.classList.add('hidden');
-            statusEl.value = 'CONCLUIDO';
-        }
-    },
-
-    openModal(defaultType = 'SAIDA') {
-        document.getElementById('finance-form').reset();
-        document.getElementById('tx-id').value = '';
-        document.getElementById('type').value = defaultType;
-        document.getElementById('btn-delete').classList.add('hidden');
-        document.querySelector('.modal-header h2').innerText = "Novo Registro";
-        
-        document.getElementById('tx-date').value = new Date().toISOString().split('T')[0];
-
-        this.toggleStatus();
-
-        document.getElementById('modal').classList.remove('hidden');
-        setTimeout(() => document.getElementById('modal-content').classList.add('active'), 50);
-    },
-
-    editTx(id) {
-        const t = this.transactionsData.find(x => x.id === id);
-        if(!t) return;
-
-        document.getElementById('tx-id').value = t.id;
-        document.getElementById('type').value = t.tipo;
-        document.getElementById('currency').value = t.moeda;
-        document.getElementById('amount').value = t.valor;
-        document.getElementById('tx-date').value = t.data; 
-        document.getElementById('origin').value = t.origem_destino;
-        document.getElementById('wallet').value = t.local_dinheiro;
-        document.getElementById('method').value = t.metodo;
-        document.getElementById('notes').value = t.observacoes || '';
-        document.getElementById('status').value = t.status || 'PENDENTE';
-
-        this.toggleStatus();
-
-        document.getElementById('btn-delete').classList.remove('hidden');
-        document.querySelector('.modal-header h2').innerText = "Editar Registro";
-
-        document.getElementById('modal').classList.remove('hidden');
-        setTimeout(() => document.getElementById('modal-content').classList.add('active'), 50);
-    },
-
-    closeModal() {
-        document.getElementById('modal-content').classList.remove('active');
-        setTimeout(() => document.getElementById('modal').classList.add('hidden'), 300);
-    },
-
-    setDashMoeda(moeda) {
-        this.currentDashMoeda = moeda;
-        this.renderDashboard();
-    },
-
-    setDashType(type) {
-        this.currentDashType = type;
-        this.renderDashboard();
-    },
-
-    /* ======== DASHBOARD (PIZZA + LEGENDA HTML) ======== */
-    renderDashboard() {
-        const moedaAtiva = this.currentDashMoeda;
-        const tipoAtivo = this.currentDashType;
-        const taxa = this.exchangeRate || 1420;
-
-        document.getElementById('dash-btn-brl').classList.toggle('active', moedaAtiva === 'BRL');
-        document.getElementById('dash-btn-pyg').classList.toggle('active', moedaAtiva === 'PYG');
-        document.getElementById('dash-btn-tudo').classList.toggle('active', tipoAtivo === 'TUDO');
-        document.getElementById('dash-btn-entrada').classList.toggle('active', tipoAtivo === 'ENTRADA');
-        document.getElementById('dash-btn-saida').classList.toggle('active', tipoAtivo === 'SAIDA');
-        document.getElementById('dash-btn-divida').classList.toggle('active', tipoAtivo === 'DIVIDA');
-
-        let chart1Labels = [];
-        let chart1Data = [];
-        let chart1Colors = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#6366f1'];
-        let title1 = '';
-
-        if (tipoAtivo === 'TUDO') {
-            title1 = 'Visão Global (Guaranis + Reais Convertidos)';
-            
-            const entBrl = this.transactionsData.filter(t => t.tipo === 'ENTRADA' && t.moeda === 'BRL').reduce((a, b) => a + b.valor, 0);
-            const entPyg = this.transactionsData.filter(t => t.tipo === 'ENTRADA' && t.moeda === 'PYG').reduce((a, b) => a + b.valor, 0);
-            const totalEnt = entPyg + (entBrl * taxa);
-
-            const saiBrl = this.transactionsData.filter(t => t.tipo === 'SAIDA' && t.moeda === 'BRL').reduce((a, b) => a + b.valor, 0);
-            const saiPyg = this.transactionsData.filter(t => t.tipo === 'SAIDA' && t.moeda === 'PYG').reduce((a, b) => a + b.valor, 0);
-            const totalSai = saiPyg + (saiBrl * taxa);
-
-            chart1Labels = ['Entradas Globais', 'Saídas Globais'];
-            chart1Data = [totalEnt, totalSai];
-            chart1Colors = ['#10b981', '#ef4444']; 
-            
-        } else {
-            const baseData = this.transactionsData.filter(t => t.moeda === moedaAtiva && t.tipo === tipoAtivo);
-            const originMap = {};
-            
-            baseData.forEach(t => {
-                originMap[t.origem_destino] = (originMap[t.origem_destino] || 0) + t.valor;
-            });
-
-            chart1Labels = Object.keys(originMap);
-            chart1Data = Object.values(originMap);
-
-            const tipoNome = tipoAtivo === 'ENTRADA' ? 'Entradas' : tipoAtivo === 'SAIDA' ? 'Saídas' : 'Dívidas';
-            title1 = `${tipoNome} por Origem (${moedaAtiva === 'BRL' ? 'R$' : '₲'})`;
-        }
-
-        document.getElementById('chartOriginsTitle').innerText = title1;
-
-        // Limpa o gráfico de pizza anterior
-        if (this.charts.expenses) this.charts.expenses.destroy();
-        
-        const ctxExpenses = document.getElementById('chartExpenses').getContext('2d');
-        this.charts.expenses = new Chart(ctxExpenses, {
-            type: 'doughnut',
-            data: {
-                labels: chart1Labels,
-                datasets: [{
-                    data: chart1Data,
-                    backgroundColor: chart1Colors,
-                    borderWidth: 2
-                }]
-            },
-            options: { 
-                responsive: true, 
-                plugins: { 
-                    legend: { display: false }, // Ocultamos a legenda padrão do Chart.js
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                let label = context.label || '';
-                                if (label) label += ': ';
-                                if (tipoAtivo === 'TUDO') {
-                                    label += '₲ ' + context.parsed.toLocaleString('es-PY', {maximumFractionDigits: 0});
-                                } else {
-                                    label += (moedaAtiva === 'BRL' ? 'R$ ' : '₲ ') + context.parsed.toLocaleString(moedaAtiva === 'BRL' ? 'pt-BR' : 'es-PY');
-                                }
-                                return label;
-                            }
-                        }
-                    }
-                } 
-            }
+    _registerSW() {
+        if (!('serviceWorker' in navigator)) return;
+        navigator.serviceWorker.register('sw.js')
+            .then(reg => { if ('sync' in reg) reg.sync.register('sync-offline-queue').catch(() => {}); })
+            .catch(e => console.warn('SW:', e));
+        navigator.serviceWorker.addEventListener('message', e => {
+            if (e.data?.type === 'SYNC_OFFLINE_QUEUE') OfflineQueue.drain();
         });
-
-        // Montagem da Legenda Customizada em HTML
-        const totalSum = chart1Data.reduce((a, b) => a + b, 0);
-        const legendContainer = document.getElementById('chart-legend');
-        
-        if (chart1Data.length === 0) {
-            legendContainer.innerHTML = `<div style="text-align:center; color:#94a3b8; padding: 10px;">Sem dados para exibir</div>`;
-        } else {
-            legendContainer.innerHTML = chart1Labels.map((label, i) => {
-                const val = chart1Data[i];
-                const perc = totalSum > 0 ? ((val / totalSum) * 100).toFixed(1) : 0;
-                const color = chart1Colors[i % chart1Colors.length];
-                
-                let prefix = tipoAtivo === 'TUDO' ? '₲ ' : (moedaAtiva === 'BRL' ? 'R$ ' : '₲ ');
-                const isReal = moedaAtiva === 'BRL' && tipoAtivo !== 'TUDO';
-                const valStr = prefix + val.toLocaleString(isReal ? 'pt-BR' : 'es-PY', {maximumFractionDigits: 0});
-
-                return `
-                    <div class="legend-item">
-                        <div class="legend-left">
-                            <div class="legend-color" style="background:${color}"></div>
-                            <span>${label}</span>
-                        </div>
-                        <div class="legend-val">
-                            ${valStr} <span style="font-size:0.75rem; color:#64748b; margin-left:4px; font-weight:normal;">(${perc}%)</span>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-    }
+    },
 };
+
+// Inject spin animation
+const _style = document.createElement('style');
+_style.textContent = `@keyframes spin{to{transform:rotate(360deg)}} .spin{animation:spin 0.8s linear infinite;display:inline-block}`;
+document.head.appendChild(_style);
 
 window.app = app;
 app.init();
-
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js')
-        .then(() => console.log("Service Worker Ativo"))
-        .catch(err => console.log("Erro SW:", err));
-}
