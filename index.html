@@ -123,14 +123,18 @@
     <!-- ===== VIEW: LISTA ===== -->
     <div id="view-lista" class="view-section active-view">
         <nav class="filter-bar">
-            <button onclick="app.filterType('TUDO', this)"          class="chip active">Tudo</button>
-            <button onclick="app.filterType('ENTRADA', this)"       class="chip">Entradas</button>
-            <button onclick="app.filterType('SAIDA', this)"         class="chip">Saídas</button>
-            <button onclick="app.filterType('DIVIDA', this)"        class="chip">Dívidas</button>
-            <button onclick="app.filterType('TRANSFERENCIA', this)" class="chip">Transferências</button>
+            <button onclick="app.filterType('TUDO', this)"           class="chip active">Tudo</button>
+            <button onclick="app.filterType('ENTRADA', this)"        class="chip">Entradas</button>
+            <button onclick="app.filterType('GASTO_FIXO', this)"     class="chip">G. Fixos</button>
+            <button onclick="app.filterType('GASTO_VARIAVEL', this)" class="chip">G. Variáveis</button>
+            <button onclick="app.filterType('DIVIDA', this)"         class="chip">Dívidas</button>
+            <button onclick="app.filterType('TRANSFERENCIA', this)"  class="chip">Transferências</button>
         </nav>
         <main id="transaction-list" class="list-container"></main>
         <div class="fab-group">
+            <button onclick="app.printReport()" class="fab fab--print" title="Imprimir / PDF">
+                <span class="material-symbols-rounded">print</span>
+            </button>
             <button onclick="app.openModal('ENTRADA')" class="fab fab--entrada" title="Nova Entrada">
                 <span class="material-symbols-rounded">add</span>
             </button>
@@ -217,7 +221,7 @@
         </div>
 
         <!-- Chart -->
-        <div class="dash-section" style="padding-bottom: 20px;">
+        <div class="dash-section" style="padding-bottom: 80px;">
             <div class="chart-card">
                 <h3 id="chartOriginsTitle">Despesas por Categoria</h3>
                 <div class="chart-wrap">
@@ -225,6 +229,13 @@
                 </div>
                 <div id="chart-legend" class="custom-legend"></div>
             </div>
+        </div>
+
+        <!-- Print FAB for Dashboard -->
+        <div class="fab-group">
+            <button onclick="app.printReport()" class="fab fab--print" title="Imprimir / PDF (com filtros do dashboard)">
+                <span class="material-symbols-rounded">print</span>
+            </button>
         </div>
 
     </div>
@@ -247,9 +258,11 @@
                         <label class="form-label">Tipo</label>
                         <select id="type" required onchange="app.onTypeChange()">
                             <option value="ENTRADA">↑ Entrada</option>
-                            <option value="SAIDA" selected>↓ Saída</option>
-                            <option value="DIVIDA">⏳ Dívida Futura</option>
+                            <option value="GASTO_FIXO">🔄 Gasto Fixo</option>
+                            <option value="GASTO_VARIAVEL" selected>📦 Gasto Variável</option>
+                            <option value="DIVIDA">⏳ Dívida</option>
                             <option value="TRANSFERENCIA">⇄ Transferência</option>
+                            <option value="SAIDA" style="color:#94a3b8;">↓ Saída (legado)</option>
                         </select>
                     </div>
                     <div class="form-field">
@@ -271,11 +284,11 @@
                     <div class="form-field" id="field-status" style="display:none;">
                         <label class="form-label">Status</label>
                         <select id="status" style="background:#fef9c3;">
-                            <option value="PENDENTE">Pendente</option>
-                            <option value="PAGA">Paga</option>
-                            <option value="ATRASADA">Atrasada</option>
-                            <option value="NEGOCIADA">Negociada</option>
-                            <option value="CANCELADA">Cancelada</option>
+                            <option value="PENDENTE">⏳ Pendente</option>
+                            <option value="NEGOCIADA">🤝 Negociado</option>
+                            <option value="EM_ANDAMENTO">🔄 Em Andamento</option>
+                            <option value="QUITADA">✅ Quitado</option>
+                            <option value="CANCELADA">❌ Cancelada</option>
                         </select>
                     </div>
                 </div>
@@ -321,15 +334,21 @@
                            style="display:none; margin-top:6px;">
                 </div>
 
-                <!-- SUBTIPO DÍVIDA (visível apenas quando tipo = DIVIDA) -->
-                <div class="form-field" id="field-tipo-divida" style="display:none;">
-                    <label class="form-label">Subtipo de Dívida</label>
-                    <select id="tipo-divida">
-                        <option value="FIXA_MENSAL">🔄 Fixa Mensal (Energia, Internet…)</option>
-                        <option value="PARCELADA">📆 Parcelada (ex: 1/10)</option>
-                        <option value="ASSINATURA">☁️ Assinatura / SaaS (Servidores, Streaming…)</option>
-                        <option value="SAZONAL_ANUAL">📅 Sazonal / Anual (Impostos, Seguros…)</option>
-                    </select>
+                <!-- CAMPOS DÍVIDA -->
+                <div id="field-tipo-divida" style="display:none;">
+                    <div class="form-row">
+                        <div class="form-field">
+                            <label class="form-label">🌍 País da Dívida</label>
+                            <select id="pais-divida">
+                                <option value="PY">🇵🇾 Paraguai</option>
+                                <option value="BR">🇧🇷 Brasil</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label class="form-label">Credor</label>
+                            <input type="text" id="credor" placeholder="Ex: Banco, Loja…">
+                        </div>
+                    </div>
                 </div>
 
                 <!-- WISE / MONEYGRAM AUTO-FILL BLOCK -->
@@ -409,6 +428,18 @@
                         </div>
                     </div>
                     <div class="parcelas-preview" id="parcelas-preview" style="display:none;"></div>
+                </div>
+
+                <!-- RECORRÊNCIA — só para GASTO_FIXO -->
+                <div class="form-field" id="field-recorrente" style="display:none;">
+                    <label class="reserva-toggle">
+                        <input type="checkbox" id="is-recorrente">
+                        <span class="toggle-box"></span>
+                        <div>
+                            <span class="toggle-label">🔄 Recorrente (todo mês, sem fim)</span>
+                            <span class="toggle-hint">Sem número fixo de parcelas</span>
+                        </div>
+                    </label>
                 </div>
 
                 <!-- CAIXINHA -->

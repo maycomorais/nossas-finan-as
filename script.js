@@ -40,6 +40,11 @@ const fmt = {
 };
 
 // ============================================================
+// CONSTANTS
+// ============================================================
+const TIPOS_GASTO = ['SAIDA', 'GASTO_FIXO', 'GASTO_VARIAVEL', 'DIVIDA'];
+
+// ============================================================
 // STATE
 // ============================================================
 const State = {
@@ -423,16 +428,28 @@ const UITotals = {
         const total  = pygD + brlD * taxa;
         const patrim = total + pygR + brlR * taxa;
 
-        this._anim('balance-brl',   fmt.brl(brlD));
-        this._anim('balance-pyg',   fmt.pyg(pygD));
-        this._anim('balance-total', fmt.pyg(total));
+        // Signed formatters: prefix '−' when negative (fmt.brl/pyg use Math.abs internally)
+        const signedBrl = v => (v < 0 ? '−' : '') + fmt.brl(v);
+        const signedPyg = v => (v < 0 ? '−' : '') + fmt.pyg(v);
+
+        this._anim('balance-brl',   signedBrl(brlD));
+        this._anim('balance-pyg',   signedPyg(pygD));
+        this._anim('balance-total', signedPyg(total));
+
+        // Color cards red when negative so the sign is visually obvious
+        const elBrl   = document.getElementById('balance-brl');
+        const elPyg   = document.getElementById('balance-pyg');
+        const elTotal = document.getElementById('balance-total');
+        if (elBrl)   elBrl.style.color   = brlD  < 0 ? '#fca5a5' : '';
+        if (elPyg)   elPyg.style.color   = pygD  < 0 ? '#fca5a5' : '';
+        if (elTotal) elTotal.style.color = total < 0 ? '#fca5a5' : '';
 
         document.getElementById('balance-brl-reserva').textContent = brlR !== 0 ? `+ ${fmt.brl(brlR)} caixinha` : '';
         const mgRate = taxa * (1 - Config.MONEYGRAM_SPREAD);
         const mgEl   = document.getElementById('balance-brl-mg');
-        if (mgEl) mgEl.textContent = brlD !== 0 ? `≈ ${fmt.pyg(brlD * mgRate)} (MG)` : '';
+        if (mgEl) mgEl.textContent = brlD !== 0 ? `≈ ${signedPyg(brlD * mgRate)} (MG)` : '';
         document.getElementById('balance-pyg-reserva').textContent = pygR !== 0 ? `+ ${fmt.pyg(pygR)} caixinha` : '';
-        document.getElementById('balance-patrimonio').textContent  = `Patrimônio: ${fmt.pyg(patrim)}`;
+        document.getElementById('balance-patrimonio').textContent  = `Patrimônio: ${signedPyg(patrim)}`;
     },
 
     _anim(id, value) {
@@ -452,7 +469,7 @@ const UIDashboard = {
         const filtered = origin === 'TUDO' ? txs : txs.filter(t => t.origem_destino === origin);
 
         const ent = Calc.pl(filtered, { tipo: 'ENTRADA', convertAll: true });
-        const sai = Calc.pl(filtered, { tipo: 'SAIDA',   convertAll: true });
+        const sai = Math.abs(Calc.pl(filtered, { tipo: 'SAIDA',   convertAll: true }));
         const res = ent - sai;
 
         document.getElementById('dash-total-entradas').textContent = fmt.pyg(ent);
@@ -865,11 +882,9 @@ const FormHandler = {
             status:           document.getElementById('status').value || 'CONCLUIDO',
             data:             document.getElementById('tx-date').value,
             categoria:        catVal || null,
-            // categoria_select e origem_select: descomente após rodar migration.sql no Supabase
-            // categoria_select: catSel || null,
-            // origem_select:    origemSel || null,
-            // tipo_divida: descomente após rodar migration.sql no Supabase
-            // tipo_divida: tipo === 'DIVIDA' ? (document.getElementById('tipo-divida')?.value || null) : null,
+            categoria_select: catSel || null,
+            origem_select:    origemSel || null,
+            tipo_divida:      tipo === 'DIVIDA' ? (document.getElementById('tipo-divida')?.value || null) : null,
             parcela_atual:    parseInt(document.getElementById('parcela-atual').value) || 1,
             total_parcelas:   parseInt(document.getElementById('total-parcelas').value) || 1,
             is_reserva:       document.getElementById('is-reserva').checked,
@@ -994,6 +1009,7 @@ const app = {
     },
 
     setDashMoeda(m)   { State.dashMoeda  = m; UIDashboard.update(State.transactions); },
+    printReport()     { PrintReport.print(); },
     setDashType(t)    { State.dashType   = t; UIDashboard.update(State.transactions); },
     renderDashboard() { State.dashOrigin = document.getElementById('dash-filter-origin').value; UIDashboard.update(State.transactions); },
 
@@ -1116,6 +1132,293 @@ const PWAInstall = {
             </div>`;
         document.body.appendChild(modal);
         modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    },
+};
+
+
+// ============================================================
+// PRINT REPORT — v2.0
+// Respeita filtros ativos (lista e dashboard) + gráfico
+// ============================================================
+const PrintReport = {
+
+    print() {
+        // ── 1. Detecta qual view está ativa ──────────────────
+        const isDash = document.getElementById('view-dashboard')
+                           .classList.contains('active-view');
+        isDash ? this._printDashboard() : this._printLista();
+    },
+
+    // ── PRINT LISTA ──────────────────────────────────────────
+    _printLista() {
+        const filter = State.currentFilter;   // TUDO | ENTRADA | GASTO_FIXO | …
+        const txs    = filter === 'TUDO'
+            ? State.transactions
+            : State.transactions.filter(t => t.tipo === filter);
+
+        const TLBL   = { TUDO:'Todas as Movimentações', ENTRADA:'Entradas',
+                         SAIDA:'Saídas', GASTO_FIXO:'Gastos Fixos',
+                         GASTO_VARIAVEL:'Gastos Variáveis',
+                         DIVIDA:'Dívidas', TRANSFERENCIA:'Transferências' };
+        const filterLabel = TLBL[filter] || filter;
+
+        // P&L para este filtro
+        const ent  = Calc.pl(txs, { tipo: 'ENTRADA', convertAll: true });
+        const sai  = Math.abs(Calc.pl(txs, { tipo: 'SAIDA', convertAll: true }));
+        const res  = ent - sai;
+        const brlD = Calc.balance(txs, 'BRL', { onlyAvailable: true });
+        const pygD = Calc.balance(txs, 'PYG', { onlyAvailable: true });
+        const sign = (v, fn) => (v < 0 ? '−' : '') + fn(Math.abs(v));
+
+        // Gráfico — despesas por categoria (filtro aplicado)
+        const gastoTxs = txs.filter(t => TIPOS_GASTO.includes(t.tipo));
+        const chartMap = {};
+        gastoTxs.forEach(t => {
+            const k = t.categoria || t.origem_destino || 'Outros';
+            chartMap[k] = (chartMap[k] || 0) + (t.moeda === 'BRL' ? t.valor * Calc.txRate(t) : t.valor);
+        });
+        const chartTitle = filter === 'TUDO'
+            ? 'Despesas por Categoria'
+            : `Distribuição — ${filterLabel}`;
+
+        const rows = this._buildRows(txs);
+        const month = document.getElementById('filter-month').value;
+        const label = this._monthLabel(month);
+
+        this._openWindow({
+            label, filterLabel,
+            ent, sai, res, brlD, pygD, sign,
+            rows, chartMap, chartTitle,
+        });
+    },
+
+    // ── PRINT DASHBOARD ──────────────────────────────────────
+    _printDashboard() {
+        const origin = State.dashOrigin;
+        const moeda  = State.dashMoeda;
+        const tipo   = State.dashType;
+
+        const MLBL = { BRL:'R$', PYG:'₲', MIX:'Todas as moedas' };
+        const TLBL2 = { TUDO:'Tudo', ENTRADA:'Entradas', SAIDA:'Saídas',
+                        GASTO_FIXO:'Gastos Fixos', GASTO_VARIAVEL:'Gastos Variáveis',
+                        DIVIDA:'Dívidas' };
+
+        // Aplica filtros do dashboard
+        let txs = State.transactions;
+        if (origin !== 'TUDO') txs = txs.filter(t => t.origem_destino === origin);
+        if (moeda !== 'MIX')   txs = txs.filter(t => t.moeda === moeda);
+        if (tipo  !== 'TUDO')  txs = txs.filter(t => t.tipo === tipo);
+
+        const filterLabel = [
+            origin !== 'TUDO' ? `Origem: ${origin}` : null,
+            `Moeda: ${MLBL[moeda] || moeda}`,
+            `Tipo: ${TLBL2[tipo] || tipo}`,
+        ].filter(Boolean).join('  ·  ');
+
+        const ent  = Calc.pl(txs, { tipo: 'ENTRADA', convertAll: true });
+        const sai  = Math.abs(Calc.pl(txs, { tipo: 'SAIDA', convertAll: true }));
+        const res  = ent - sai;
+        const brlD = Calc.balance(State.transactions, 'BRL', { onlyAvailable: true });
+        const pygD = Calc.balance(State.transactions, 'PYG', { onlyAvailable: true });
+        const sign = (v, fn) => (v < 0 ? '−' : '') + fn(Math.abs(v));
+
+        // Gráfico — igual ao dashboard ativo
+        const gFn  = tipo === 'ENTRADA'
+            ? t => t.origem_destino || 'Outros'
+            : t => t.categoria || t.origem_destino || 'Outros';
+        const chartMap = {};
+        txs.filter(t => t.tipo !== 'TRANSFERENCIA').forEach(t => {
+            const k = gFn(t);
+            chartMap[k] = (chartMap[k] || 0) +
+                (moeda === 'MIX' && t.moeda === 'BRL' ? t.valor * Calc.txRate(t) : t.valor);
+        });
+        const chartTitle = document.getElementById('chartOriginsTitle')?.textContent
+            || 'Distribuição';
+
+        const rows = this._buildRows(txs);
+        const month = document.getElementById('filter-month').value;
+        const label = this._monthLabel(month);
+
+        this._openWindow({
+            label, filterLabel,
+            ent, sai, res, brlD, pygD, sign,
+            rows, chartMap, chartTitle,
+        });
+    },
+
+    // ── HELPERS ───────────────────────────────────────────────
+    _monthLabel(month) {
+        if (!month) return '';
+        const [y, m] = month.split('-');
+        const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                        'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+        return `${MONTHS[parseInt(m) - 1]} / ${y}`;
+    },
+
+    _buildRows(txs) {
+        const TLBL = { ENTRADA:'Entrada', SAIDA:'Saída', GASTO_FIXO:'G.Fixo',
+                       GASTO_VARIAVEL:'G.Variável', DIVIDA:'Dívida',
+                       TRANSFERENCIA:'Transf.' };
+        return [...txs].sort((a, b) => a.data < b.data ? -1 : 1).map(t => {
+            const isIn = t.tipo === 'ENTRADA', isTr = t.tipo === 'TRANSFERENCIA';
+            const c = isIn ? '#15803d' : isTr ? '#6366f1'
+                    : t.tipo === 'DIVIDA' ? '#b45309' : '#dc2626';
+            const s = isIn ? '+' : isTr ? '⇄' : '−';
+            const parcela = t.total_parcelas > 1
+                ? `<span style="font-size:8px;color:#6366f1;font-weight:700;margin-left:4px;">${t.parcela_atual}/${t.total_parcelas}</span>` : '';
+            const status = (t.tipo === 'DIVIDA' || t.status === 'PENDENTE')
+                ? `<span style="font-size:8px;background:#fef9c3;color:#854d0e;padding:1px 4px;border-radius:3px;margin-left:4px;">${t.status}</span>` : '';
+            return `<tr>
+                <td>${fmt.date(t.data)}</td>
+                <td style="color:${c};font-weight:700">${TLBL[t.tipo] || t.tipo}</td>
+                <td>${t.origem_destino || '—'}${parcela}${status}</td>
+                <td>${t.categoria || '—'}</td>
+                <td>${t.local_dinheiro || '—'}</td>
+                <td>${t.metodo || '—'}</td>
+                <td style="text-align:right;font-weight:600;color:${c}">${s} ${fmt.money(t.valor, t.moeda)}</td>
+                <td style="text-align:center">${t.conciliado ? '✓' : t.status === 'PENDENTE' ? '⏳' : ''}</td>
+            </tr>`;
+        }).join('');
+    },
+
+    _openWindow({ label, filterLabel, ent, sai, res, brlD, pygD, sign, rows, chartMap, chartTitle }) {
+        const taxa    = State.exchangeRate;
+        const COLORS  = Config.CHART_COLORS;
+        const cLabels = Object.keys(chartMap);
+        const cData   = Object.values(chartMap);
+        const total   = cData.reduce((a, b) => a + b, 0);
+
+        // Legend HTML for print
+        const legendHTML = cLabels.map((l, i) => {
+            const v = cData[i], c = COLORS[i % COLORS.length];
+            const pct = total > 0 ? ((v / total) * 100).toFixed(1) : '0';
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid #f1f5f9">
+                <div style="display:flex;align-items:center;gap:7px">
+                    <div style="width:10px;height:10px;border-radius:2px;background:${c};flex-shrink:0"></div>
+                    <span style="font-size:10px">${l}</span>
+                </div>
+                <div style="text-align:right">
+                    <span style="font-size:10px;font-weight:700">${fmt.pyg(v)}</span>
+                    <span style="font-size:8px;color:#94a3b8;margin-left:6px">${pct}%</span>
+                </div>
+            </div>`;
+        }).sort().join('');
+
+        const html = `<!DOCTYPE html><html lang="pt-br"><head>
+<meta charset="UTF-8">
+<title>Relatório — ${label} — ${filterLabel}</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"><\/script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#1e1b4b;padding:16px}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #4f46e5;padding-bottom:10px;margin-bottom:14px}
+.hdr-title{font-size:18px;font-weight:800;color:#4f46e5}
+.hdr-period{font-size:12px;color:#6366f1;font-weight:600;margin-top:2px}
+.hdr-filter{font-size:9px;color:#fff;background:#6366f1;padding:2px 8px;border-radius:10px;margin-top:4px;display:inline-block}
+.hdr-meta{font-size:9px;color:#94a3b8;text-align:right}
+.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:14px}
+.card{border:1.5px solid #e0e7ff;border-radius:8px;padding:7px 9px}
+.card h4{font-size:7px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:3px}
+.card strong{font-size:12px;font-weight:800;display:block}
+.card small{font-size:7px;color:#94a3b8;margin-top:1px;display:block}
+.green strong{color:#15803d}.red strong{color:#dc2626}.blue strong{color:#1d4ed8}.purple strong{color:#4f46e5}.amber strong{color:#b45309}
+.section-title{font-size:11px;font-weight:700;color:#4f46e5;margin:12px 0 6px;padding-bottom:3px;border-bottom:1.5px solid #e0e7ff}
+.chart-section{display:grid;grid-template-columns:180px 1fr;gap:16px;margin-bottom:14px;align-items:start}
+.chart-wrap{position:relative;width:180px;height:180px}
+.chart-legend{flex:1}
+table{width:100%;border-collapse:collapse;font-size:10px}
+thead tr{background:#4f46e5;color:#fff}
+thead th{padding:5px 6px;text-align:left;font-weight:600;font-size:8.5px}
+tbody tr{border-bottom:1px solid #f1f5f9}
+tbody tr:nth-child(even){background:#f8fafc}
+td{padding:4px 6px;vertical-align:middle}
+.footer{margin-top:12px;padding-top:7px;border-top:1px solid #e0e7ff;font-size:8px;color:#94a3b8;display:flex;justify-content:space-between}
+@media print{
+  @page{margin:10mm 8mm;size:A4 portrait}
+  body{padding:0}
+  .chart-section{break-inside:avoid}
+}
+</style></head><body>
+
+<div class="hdr">
+  <div>
+    <div class="hdr-title">💰 Finanças Família Morais</div>
+    <div class="hdr-period">${label}</div>
+    <span class="hdr-filter">Filtro: ${filterLabel}</span>
+  </div>
+  <div class="hdr-meta">
+    Gerado em ${new Date().toLocaleString('pt-BR')}<br>
+    Câmbio: R$1 = ₲ ${taxa.toFixed(0)}
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card green"><h4>Receitas</h4><strong>${fmt.pyg(ent)}</strong><small>em ₲</small></div>
+  <div class="card red"><h4>Despesas</h4><strong>${fmt.pyg(sai)}</strong><small>em ₲</small></div>
+  <div class="card ${res >= 0 ? 'blue' : 'red'}"><h4>Resultado</h4><strong>${sign(res, fmt.pyg)}</strong><small>${res >= 0 ? 'Superávit' : 'Déficit'}</small></div>
+  <div class="card purple"><h4>Saldo R$</h4><strong>${sign(brlD, fmt.brl)}</strong><small>disponível</small></div>
+  <div class="card amber"><h4>Saldo ₲</h4><strong>${sign(pygD, fmt.pyg)}</strong><small>disponível</small></div>
+</div>
+
+${cLabels.length > 0 ? `
+<div class="section-title">📊 ${chartTitle}</div>
+<div class="chart-section">
+  <div class="chart-wrap">
+    <canvas id="printChart" width="180" height="180"></canvas>
+  </div>
+  <div class="chart-legend">${legendHTML}</div>
+</div>` : ''}
+
+<div class="section-title">📋 Movimentações (${rows.split('<tr>').length - 1} registros)</div>
+<table>
+  <thead>
+    <tr>
+      <th>Data</th><th>Tipo</th><th>Origem/Destino</th><th>Categoria</th>
+      <th>Carteira</th><th>Método</th><th style="text-align:right">Valor</th><th>St.</th>
+    </tr>
+  </thead>
+  <tbody>${rows}</tbody>
+</table>
+
+<div class="footer">
+  <span>maycomorais.github.io/nossas-finan-as · ${label} · ${filterLabel}</span>
+  <span>Câmbio ₲ ${taxa.toFixed(0)}/R$ na data de geração</span>
+</div>
+
+<script>
+window.onload = function() {
+  ${cLabels.length > 0 ? `
+  var ctx = document.getElementById('printChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ${JSON.stringify(cLabels)},
+      datasets: [{
+        data: ${JSON.stringify(cData)},
+        backgroundColor: ${JSON.stringify(COLORS.slice(0, cLabels.length))},
+        borderWidth: 2,
+        borderColor: '#fff',
+        hoverOffset: 0,
+      }]
+    },
+    options: {
+      responsive: false,
+      cutout: '58%',
+      animation: { onComplete: function() { window.print(); } },
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false },
+      }
+    }
+  });` : 'window.print();'}
+};
+<\/script>
+</body></html>`;
+
+        const win = window.open('', '_blank', 'width=960,height=760');
+        if (!win) { UIToast.show('⚠️ Permita pop-ups para imprimir', 'warning', 5000); return; }
+        win.document.write(html);
+        win.document.close();
     },
 };
 

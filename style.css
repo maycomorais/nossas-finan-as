@@ -1157,3 +1157,19 @@ input[type="file"].input-file {
     font-weight: 600;
     cursor: pointer;
 }
+/* ── FAB Imprimir ─────────────────────────────────────────── */
+.fab--print {
+    background: linear-gradient(135deg, #0ea5e9, #0284c7) !important;
+    box-shadow: 0 4px 18px rgba(14,165,233,.5) !important;
+}
+.fab--print:active { transform: scale(.93); }
+
+/* ── Ícone GASTO_FIXO / GASTO_VARIAVEL na lista ──────────── */
+.tx-icon--gf { background: linear-gradient(135deg,#6366f1,#8b5cf6); }
+.tx-icon--gv { background: linear-gradient(135deg,#f59e0b,#ef4444); }
+
+/* ── Saldo negativo: cor vermelha já aplicada via JS ─────── */
+.balance-sub--mg { color: #a5f3fc; font-size: .72rem; }
+
+/* ── Chips filtro: wrap em tela pequena ──────────────────── */
+.filter-bar { flex-wrap: wrap; gap: 5px; }
