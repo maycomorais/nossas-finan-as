@@ -36,6 +36,19 @@
     <!-- ===== TOAST CONTAINER ===== -->
     <div id="toast-container" aria-live="polite"></div>
 
+    <!-- ===== PWA INSTALL BANNER ===== -->
+    <div id="install-banner" class="install-banner" style="display:none;">
+        <img src="https://i.ibb.co/XZ010Lb7/famila.png" alt="ícone" class="install-banner__icon">
+        <div class="install-banner__text">
+            <strong>Finanças Família</strong>
+            <span id="install-banner-sub">Adicione à sua tela de início</span>
+        </div>
+        <button id="install-banner-dismiss" class="install-banner__btn install-banner__btn--no"
+                onclick="PWAInstall.dismiss()">Agora não</button>
+        <button id="install-banner-action" class="install-banner__btn install-banner__btn--yes"
+                onclick="PWAInstall.install()">Instalar</button>
+    </div>
+
     <!-- ===== OFFLINE SYNC BANNER ===== -->
     <div id="offline-banner" class="offline-banner" style="display:none;" onclick="OfflineQueue.drain()">
         <span class="material-symbols-rounded">cloud_sync</span>

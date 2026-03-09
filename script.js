@@ -865,9 +865,11 @@ const FormHandler = {
             status:           document.getElementById('status').value || 'CONCLUIDO',
             data:             document.getElementById('tx-date').value,
             categoria:        catVal || null,
-            categoria_select: catSel || null,
-            origem_select:    origemSel || null,
-            tipo_divida:      tipo === 'DIVIDA' ? (document.getElementById('tipo-divida')?.value || null) : null,
+            // categoria_select e origem_select: descomente após rodar migration.sql no Supabase
+            // categoria_select: catSel || null,
+            // origem_select:    origemSel || null,
+            // tipo_divida: descomente após rodar migration.sql no Supabase
+            // tipo_divida: tipo === 'DIVIDA' ? (document.getElementById('tipo-divida')?.value || null) : null,
             parcela_atual:    parseInt(document.getElementById('parcela-atual').value) || 1,
             total_parcelas:   parseInt(document.getElementById('total-parcelas').value) || 1,
             is_reserva:       document.getElementById('is-reserva').checked,
@@ -1011,5 +1013,112 @@ const _style = document.createElement('style');
 _style.textContent = `@keyframes spin{to{transform:rotate(360deg)}} .spin{animation:spin 0.8s linear infinite;display:inline-block}`;
 document.head.appendChild(_style);
 
+
+// ============================================================
+// PWA INSTALL BANNER
+// Handles Android (beforeinstallprompt) + iOS (manual guide)
+// ============================================================
+const PWAInstall = {
+    _deferredPrompt: null,
+    _isIOS: /iphone|ipad|ipod/i.test(navigator.userAgent),
+    _DISMISSED_KEY: 'pwa_install_dismissed',
+
+    init() {
+        // Don't show if already installed as PWA
+        if (window.matchMedia('(display-mode: standalone)').matches) return;
+        // Don't show if user dismissed recently (7 days)
+        const ts = parseInt(localStorage.getItem(this._DISMISSED_KEY) || '0');
+        if (Date.now() - ts < 7 * 24 * 60 * 60 * 1000) return;
+
+        if (this._isIOS) {
+            // iOS: show after a short delay
+            setTimeout(() => this._showBanner('Toque em compartilhar → "Tela de Início"'), 2500);
+        } else {
+            // Android/Chrome: wait for browser event
+            window.addEventListener('beforeinstallprompt', e => {
+                e.preventDefault();
+                this._deferredPrompt = e;
+                setTimeout(() => this._showBanner('Acesse mais rápido pela tela de início'), 2000);
+            });
+        }
+    },
+
+    _showBanner(subText) {
+        const banner = document.getElementById('install-banner');
+        const sub    = document.getElementById('install-banner-sub');
+        if (!banner) return;
+        if (sub) sub.textContent = subText;
+        banner.style.display = 'flex';
+        // Nudge the main content up so the banner doesn't cover the FABs
+        document.body.style.paddingBottom = (banner.offsetHeight + 8) + 'px';
+    },
+
+    _hideBanner() {
+        const banner = document.getElementById('install-banner');
+        if (banner) {
+            banner.style.animation = 'none';
+            banner.style.transition = 'transform 0.25s ease, opacity 0.25s ease';
+            banner.style.transform  = 'translateY(100%)';
+            banner.style.opacity    = '0';
+            setTimeout(() => { banner.style.display = 'none'; }, 260);
+        }
+        document.body.style.paddingBottom = '';
+    },
+
+    dismiss() {
+        localStorage.setItem(this._DISMISSED_KEY, String(Date.now()));
+        this._hideBanner();
+    },
+
+    async install() {
+        if (this._isIOS) {
+            this._hideBanner();
+            this._showIOSModal();
+            return;
+        }
+        if (!this._deferredPrompt) return;
+        this._deferredPrompt.prompt();
+        const { outcome } = await this._deferredPrompt.userChoice;
+        this._deferredPrompt = null;
+        if (outcome === 'accepted') {
+            UIToast.show('✅ App instalado com sucesso!', 'success', 4000);
+        }
+        this._hideBanner();
+    },
+
+    _showIOSModal() {
+        const modal = document.createElement('div');
+        modal.className = 'ios-install-modal';
+        modal.innerHTML = `
+            <div class="ios-install-modal__box">
+                <h3>📲 Instalar no iPhone</h3>
+                <ul class="ios-install-modal__steps">
+                    <li>
+                        <span class="step-num">1</span>
+                        <span>Toque no botão de compartilhar
+                              <strong style="color:#a5b4fc;">⎋</strong>
+                              na barra do Safari (parte de baixo da tela)</span>
+                    </li>
+                    <li>
+                        <span class="step-num">2</span>
+                        <span>Role para baixo e toque em
+                              <strong style="color:#a5b4fc;">"Adicionar à Tela de Início"</strong></span>
+                    </li>
+                    <li>
+                        <span class="step-num">3</span>
+                        <span>Toque em <strong style="color:#a5b4fc;">"Adicionar"</strong>
+                              no canto superior direito</span>
+                    </li>
+                </ul>
+                <button class="ios-install-modal__close" onclick="this.closest('.ios-install-modal').remove()">
+                    Entendi
+                </button>
+            </div>`;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+    },
+};
+
 window.app = app;
+PWAInstall.init();
 app.init();

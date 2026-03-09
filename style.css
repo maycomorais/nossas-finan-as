@@ -998,3 +998,162 @@ input[type="file"].input-file {
 .skel--icon   { width: 32px;  height: 32px; border-radius: 10px; flex-shrink: 0; }
 .skel--line   { flex: 1;      height: 12px; }
 .skel--val    { width: 64px;  height: 12px; flex-shrink: 0; }
+/* ============================================================
+   PWA INSTALL BANNER
+   ============================================================ */
+.install-banner {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: linear-gradient(135deg, #312e81 0%, #4f46e5 100%);
+    border-top: 2px solid rgba(255,255,255,0.15);
+    box-shadow: 0 -4px 24px rgba(79,70,229,0.45);
+    animation: slideUpBanner 0.35s cubic-bezier(.22,.68,0,1.2) both;
+}
+
+@keyframes slideUpBanner {
+    from { transform: translateY(100%); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
+
+.install-banner__icon {
+    width: 46px;
+    height: 46px;
+    border-radius: 12px;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 2px solid rgba(255,255,255,0.25);
+}
+
+.install-banner__text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.install-banner__text strong {
+    color: #fff;
+    font-size: 0.85rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.install-banner__text span {
+    color: #c7d2fe;
+    font-size: 0.7rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.install-banner__btn {
+    flex-shrink: 0;
+    border: none;
+    border-radius: 20px;
+    padding: 7px 14px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s, transform 0.15s;
+}
+
+.install-banner__btn:active {
+    opacity: 0.75;
+    transform: scale(0.96);
+}
+
+.install-banner__btn--no {
+    background: rgba(255,255,255,0.12);
+    color: #c7d2fe;
+}
+
+.install-banner__btn--yes {
+    background: #fff;
+    color: #4f46e5;
+}
+
+/* iOS instructions modal overlay */
+.ios-install-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: flex-end;
+    animation: fadeIn 0.2s ease both;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+.ios-install-modal__box {
+    width: 100%;
+    background: #1e1b4b;
+    border-radius: 20px 20px 0 0;
+    padding: 24px 20px 36px;
+    color: #fff;
+    animation: slideUpBanner 0.3s ease both;
+}
+
+.ios-install-modal__box h3 {
+    font-size: 1rem;
+    font-weight: 700;
+    margin: 0 0 16px;
+    color: #a5b4fc;
+}
+
+.ios-install-modal__steps {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.ios-install-modal__steps li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.85rem;
+    color: #e0e7ff;
+    line-height: 1.4;
+}
+
+.ios-install-modal__steps li .step-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #4f46e5;
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.ios-install-modal__close {
+    width: 100%;
+    padding: 12px;
+    background: rgba(255,255,255,0.1);
+    border: none;
+    border-radius: 12px;
+    color: #c7d2fe;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+}
