@@ -177,10 +177,11 @@ const OfflineQueue = {
 const DB = {
     async fetchMonth(year, month) {
         if (!State.isOnline) { UIToast.show('Offline — sem novos dados', 'warning'); return []; }
+        const lastDay = new Date(Number(year), Number(month), 0).getDate();
         const { data, error } = await _sb
             .from('transacoes').select('*')
             .gte('data', `${year}-${month}-01`)
-            .lte('data', `${year}-${month}-31`)
+            .lte('data', `${year}-${month}-${String(lastDay).padStart(2, '0')}`)
             .order('data', { ascending: false });
         if (error) { console.error('DB.fetchMonth:', error); UIToast.show('Erro ao buscar: ' + error.message, 'danger'); return []; }
         return data || [];
@@ -882,9 +883,6 @@ const FormHandler = {
             status:           document.getElementById('status').value || 'CONCLUIDO',
             data:             document.getElementById('tx-date').value,
             categoria:        catVal || null,
-            categoria_select: catSel || null,
-            origem_select:    origemSel || null,
-            tipo_divida:      tipo === 'DIVIDA' ? (document.getElementById('tipo-divida')?.value || null) : null,
             parcela_atual:    parseInt(document.getElementById('parcela-atual').value) || 1,
             total_parcelas:   parseInt(document.getElementById('total-parcelas').value) || 1,
             is_reserva:       document.getElementById('is-reserva').checked,
