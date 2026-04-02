@@ -129,6 +129,7 @@
             <button onclick="app.filterType('GASTO_VARIAVEL', this)" class="chip">G. Variáveis</button>
             <button onclick="app.filterType('DIVIDA', this)"         class="chip">Dívidas</button>
             <button onclick="app.filterType('TRANSFERENCIA', this)"  class="chip">Transferências</button>
+            <button onclick="app.filterType('RECEITA_FUTURA', this)" class="chip chip--future" data-filter="RECEITA_FUTURA">📅 Aguardando</button>
         </nav>
         <main id="transaction-list" class="list-container"></main>
         <div class="fab-group">
@@ -450,6 +451,18 @@
                         <div>
                             <span class="toggle-label">🐷 Guardar na Caixinha (Reserva)</span>
                             <span class="toggle-hint">Não entra no saldo disponível do dia a dia</span>
+                        </div>
+                    </label>
+                </div>
+
+                <!-- RECEITA FUTURA -->
+                <div class="form-field" id="field-receita-futura" style="display:none;">
+                    <label class="reserva-toggle reserva-toggle--future">
+                        <input type="checkbox" id="is-receita-futura">
+                        <span class="toggle-box toggle-box--future"></span>
+                        <div>
+                            <span class="toggle-label">📅 Receita futura (aguardando)</span>
+                            <span class="toggle-hint">Não entra no saldo até ser confirmada</span>
                         </div>
                     </label>
                 </div>

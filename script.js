@@ -49,6 +49,7 @@ const TIPOS_GASTO = ['SAIDA', 'GASTO_FIXO', 'GASTO_VARIAVEL', 'DIVIDA'];
 // ============================================================
 const State = {
     transactions:  [],
+    futureIncome:  [],
     exchangeRate:  Config.FALLBACK_RATE,
     currentFilter: 'TUDO',
     dashMoeda:     'BRL',
@@ -187,6 +188,17 @@ const DB = {
         return data || [];
     },
 
+    async fetchFutureIncome() {
+        if (!State.isOnline) return [];
+        const { data, error } = await _sb
+            .from('transacoes').select('*')
+            .eq('tipo', 'ENTRADA')
+            .eq('status', 'AGUARDANDO')
+            .order('data', { ascending: true });
+        if (error) { console.error('DB.fetchFutureIncome:', error); return []; }
+        return data || [];
+    },
+
     async insert(payload) {
         if (!State.isOnline) { OfflineQueue.enqueue('insert', [payload]); return null; }
         const { error } = await _sb.from('transacoes').insert([payload]);
@@ -230,6 +242,7 @@ const Calc = {
         return txs.filter(t => {
             if (t.tipo === 'TRANSFERENCIA')                  return false;
             if (t.tipo === 'DIVIDA' && t.status !== 'PAGA') return false;
+            if (t.status === 'AGUARDANDO')                   return false;
             if (onlyAvailable && t.is_reserva)              return false;
             if (t.moeda !== moeda)                          return false;
             return true;
@@ -317,8 +330,10 @@ const UILoading = {
 const UIList = {
     render(data) {
         const list = document.getElementById('transaction-list');
+        const showFuture = State.currentFilter === 'TUDO' || State.currentFilter === 'RECEITA_FUTURA';
+        const hasFuture  = State.futureIncome?.length > 0;
 
-        if (!data.length) {
+        if (!data.length && !(showFuture && hasFuture)) {
             list.innerHTML = `
                 <div class="empty-state">
                     <span class="material-symbols-rounded">inbox</span>
@@ -343,7 +358,60 @@ const UIList = {
             this._accumulate(groups[key], t);
         });
 
-        list.innerHTML = concBanner + Object.keys(groups).map((k, i) => this._groupCard(k, groups[k], i)).join('');
+        const futureSect = (showFuture && hasFuture) ? this._futureIncomeSection(State.futureIncome) : '';
+        list.innerHTML = futureSect + concBanner + Object.keys(groups).map((k, i) => this._groupCard(k, groups[k], i)).join('');
+    },
+
+    renderFutureOnly() {
+        const list = document.getElementById('transaction-list');
+        if (!State.futureIncome?.length) {
+            list.innerHTML = `
+                <div class="empty-state">
+                    <span class="material-symbols-rounded">event_available</span>
+                    <p>Nenhuma receita aguardando confirmação</p>
+                </div>`;
+            return;
+        }
+        list.innerHTML = this._futureIncomeSection(State.futureIncome);
+    },
+
+    _futureIncomeSection(items) {
+        const total = items.reduce((acc, t) => {
+            const v = t.moeda === 'BRL' ? t.valor * Calc.txRate(t) : t.valor;
+            return acc + v;
+        }, 0);
+        const rows = items.map(t => `
+            <div class="future-income-item">
+                <div class="future-income-info">
+                    <div class="future-income-origin">${this._esc(t.origem_destino || '—')}</div>
+                    <div class="future-income-meta">${fmt.date(t.data)} · ${t.local_dinheiro || '—'}</div>
+                    ${t.observacoes ? `<div class="future-income-obs">"${this._esc(t.observacoes)}"</div>` : ''}
+                </div>
+                <div class="future-income-right">
+                    <div class="future-income-val">${fmt.money(t.valor, t.moeda)}</div>
+                    <div class="future-income-actions">
+                        <button class="future-btn future-btn--confirm" onclick="app.confirmFutureIncome('${t.id}')" title="Confirmar recebimento">
+                            <span class="material-symbols-rounded">check_circle</span>
+                        </button>
+                        <button class="future-btn future-btn--postpone" onclick="app.postponeFutureIncome('${t.id}')" title="Adiar">
+                            <span class="material-symbols-rounded">update</span>
+                        </button>
+                        <button class="future-btn future-btn--cancel" onclick="app.cancelFutureIncome('${t.id}')" title="Cancelar">
+                            <span class="material-symbols-rounded">cancel</span>
+                        </button>
+                    </div>
+                </div>
+            </div>`).join('');
+
+        return `
+        <div class="future-income-section">
+            <div class="future-income-header">
+                <span class="material-symbols-rounded">pending_actions</span>
+                <span>Receitas Aguardando <strong>(${items.length})</strong></span>
+                <span class="future-income-total">${fmt.pyg(total)}</span>
+            </div>
+            ${rows}
+        </div>`;
     },
 
     _accumulate(g, t) {
@@ -629,16 +697,21 @@ const Modal = {
         const isTr = t === 'TRANSFERENCIA', isDt = t === 'DIVIDA',
               isIn = t === 'ENTRADA',        isOut = t === 'SAIDA';
 
-        this._sf('field-status',     isDt);
-        this._sf('transfer-fields',  isTr);
-        this._sf('field-origem',     isIn || isDt || isTr);
-        this._sf('field-categoria',  isOut);
-        this._sf('field-tipo-divida', isDt);
-        this._sf('field-parcelas',   isOut || isDt);
-        this._sf('field-reserva',    isIn);
+        this._sf('field-status',        isDt);
+        this._sf('transfer-fields',      isTr);
+        this._sf('field-origem',         isIn || isDt || isTr);
+        this._sf('field-categoria',      isOut);
+        this._sf('field-tipo-divida',    isDt);
+        this._sf('field-parcelas',       isOut || isDt);
+        this._sf('field-reserva',        isIn);
+        this._sf('field-receita-futura', isIn);
 
         if (!isDt) document.getElementById('status').value = 'CONCLUIDO';
-        if (!isIn) document.getElementById('is-reserva').checked = false;
+        if (!isIn) {
+            document.getElementById('is-reserva').checked = false;
+            const rft = document.getElementById('is-receita-futura');
+            if (rft) rft.checked = false;
+        }
 
         this.onMethodChange();
     },
@@ -809,6 +882,8 @@ const Modal = {
 
         document.getElementById('is-reserva').checked = !!t.is_reserva;
         document.getElementById('conciliado').checked  = !!t.conciliado;
+        const rft = document.getElementById('is-receita-futura');
+        if (rft) rft.checked = t.status === 'AGUARDANDO';
         this.onTypeChange();
         document.getElementById('btn-delete').classList.remove('hidden');
         document.getElementById('modal-title').textContent = 'Editar Registro';
@@ -871,6 +946,7 @@ const FormHandler = {
         const catVal   = catSel === 'Outro' ? catOutro : catSel;
 
         const origemDestino = tipo === 'SAIDA' ? catVal : origemVal;
+        const isFutureIncome = document.getElementById('is-receita-futura')?.checked;
 
         return {
             tipo,
@@ -880,7 +956,7 @@ const FormHandler = {
             local_dinheiro:   document.getElementById('wallet').value,
             metodo:           document.getElementById('method').value,
             observacoes:      document.getElementById('notes').value || null,
-            status:           document.getElementById('status').value || 'CONCLUIDO',
+            status:           isFutureIncome ? 'AGUARDANDO' : (document.getElementById('status').value || 'CONCLUIDO'),
             data:             document.getElementById('tx-date').value,
             categoria:        catVal || null,
             parcela_atual:    parseInt(document.getElementById('parcela-atual').value) || 1,
@@ -945,7 +1021,16 @@ const app = {
     async fetchData() {
         const [year, month] = document.getElementById('filter-month').value.split('-');
         if (!year) return;
-        State.transactions = await DB.fetchMonth(year, month);
+        const allData = await DB.fetchMonth(year, month);
+        State.transactions = allData.filter(t => t.status !== 'AGUARDANDO');
+        State.futureIncome = await DB.fetchFutureIncome();
+
+        // Update "Aguardando" chip badge
+        const chip = document.querySelector('[data-filter="RECEITA_FUTURA"]');
+        if (chip) chip.innerHTML = State.futureIncome.length > 0
+            ? `📅 Aguardando <span class="chip-badge">${State.futureIncome.length}</span>`
+            : `📅 Aguardando`;
+
         UITotals.update(State.transactions);
         UIDatalist.update(State.transactions);
         this._applyListFilter();
@@ -955,6 +1040,10 @@ const app = {
     },
 
     _applyListFilter() {
+        if (State.currentFilter === 'RECEITA_FUTURA') {
+            UIList.renderFutureOnly();
+            return;
+        }
         let data = State.transactions;
         if (State.currentFilter !== 'TUDO') data = data.filter(t => t.tipo === State.currentFilter);
         UIList.render(data);
@@ -996,6 +1085,29 @@ const app = {
     onCategoriaChange()    { Modal.onCategoriaChange(); },
     onValorConvertidoChange() { Modal._updateRatePreview(); },
     fetchWiseQuote()       { return Modal.fetchWiseQuote(); },
+
+    async confirmFutureIncome(id) {
+        const today = new Date().toISOString().split('T')[0];
+        const err   = await DB.update(id, { status: 'CONCLUIDO', data: today });
+        if (err) { UIToast.show('Erro: ' + err.message, 'danger'); return; }
+        UIToast.show('✅ Receita confirmada e lançada!', 'success');
+        if (State.isOnline) this.fetchData();
+    },
+
+    postponeFutureIncome(id) {
+        const t = State.futureIncome.find(x => x.id === id);
+        if (!t) return;
+        UIToast.show('📅 Mude a data para adiar e salve', 'info', 4000);
+        Modal.populate(t);
+    },
+
+    async cancelFutureIncome(id) {
+        if (!confirm('Cancelar esta receita esperada?')) return;
+        const err = await DB.update(id, { status: 'CANCELADA' });
+        if (err) { UIToast.show('Erro: ' + err.message, 'danger'); return; }
+        UIToast.show('❌ Receita cancelada', 'warning');
+        if (State.isOnline) this.fetchData();
+    },
 
     async deleteTx() {
         const id = document.getElementById('tx-id').value;
