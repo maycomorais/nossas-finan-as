@@ -633,7 +633,7 @@ const UIList = {
             t.metodo,
             t.categoria,
             isTr && t.wallet_dest ? `→ ${t.wallet_dest}` : null,
-            t.amount_usd_deducted ? `−$${parseFloat(t.amount_usd_deducted).toFixed(2)} USD` : null,
+            t.currency_deducted ? `−$${parseFloat(t.currency_deducted).toFixed(2)} USD` : null,
         ].filter(Boolean).join(' · ');
 
         const badges = [
@@ -988,11 +988,12 @@ const Modal = {
         this._sf('transfer-fields',      isTr);
         this._sf('field-origem',         isIn || isTr);
         this._sf('field-categoria',      showCat);
-        this._sf('field-parcelas',       isGV);          // parcelamento apenas em VARIAVEL
-        this._sf('field-recorrente',     isGF);          // recorrência apenas em FIXO
+        this._sf('field-parcelas',       isGV);
+        this._sf('field-recorrente',     isGF);
         this._sf('field-reserva',        isIn);
         this._sf('field-receita-futura', isIn);
-        this._sf('field-due-date',       isGF || isGV);  // vencimento para gastos
+        this._sf('field-due-date',       isGF || isGV);
+        this._sf('field-status-pago',    isGF || isGV);
 
         if (!isIn) {
             document.getElementById('is-reserva').checked = false;
@@ -1176,7 +1177,7 @@ const Modal = {
         sv('wallet-dest', t.wallet_dest || ''); sv('currency-dest', t.moeda_dest || 'PYG');
         sv('taxa-real', t.taxa_real || ''); sv('valor-convertido', t.valor_convertido || '');
         sv('valor-usd', t.valor_usd || '');
-        sv('amount-usd-deducted', t.amount_usd_deducted || '');
+        sv('amount-usd-deducted', t.currency_deducted || '');
         sv('due-date', t.due_date || '');
         sv('tx-transfer-pair-id', t.transferencia_id || '');
 
@@ -1212,6 +1213,8 @@ const Modal = {
 
         document.getElementById('is-reserva').checked  = !!t.is_reserva;
         document.getElementById('conciliado').checked   = !!t.conciliado;
+        const isPagoCb = document.getElementById('is-pago');
+        if (isPagoCb) isPagoCb.checked = STATUS_PAGO.includes(t.status);
         const rft = document.getElementById('is-receita-futura');
         if (rft) rft.checked = t.status === 'AGUARDANDO';
         this.onTypeChange();
@@ -1284,47 +1287,50 @@ const FormHandler = {
         const catVal   = catSel === 'Outro' ? catOutro : catSel;
 
         // Para gastos, origem_destino = categoria; para entradas = origem
-        const isGasto = ['SAIDA','GASTO_FIXO','GASTO_VARIAVEL'].includes(tipo);
-        const origemDestino = isGasto ? catVal : origemVal;
+        const isGastoOD = ['SAIDA','GASTO_FIXO','GASTO_VARIAVEL'].includes(tipo);
+        const isGasto   = tipo === 'GASTO_FIXO' || tipo === 'GASTO_VARIAVEL';
+        const origemDestino = isGastoOD ? catVal : origemVal;
 
         const isFutureIncome = document.getElementById('is-receita-futura')?.checked;
 
-        // Status automático baseado no tipo:
-        // GASTO_FIXO / GASTO_VARIAVEL → nasce PENDENTE
-        // ENTRADA → AGUARDANDO (se futura) ou CONCLUIDO
-        // Outros → CONCLUIDO
+        // Status:
+        //   Novo GASTO_FIXO/VARIAVEL → sempre PENDENTE
+        //   Editando GASTO_FIXO/VARIAVEL → respeita checkbox "Pago"
+        //   ENTRADA futura → AGUARDANDO
+        //   Demais → CONCLUIDO
+        const txId     = document.getElementById('tx-id').value;
+        const isPagoCb = document.getElementById('is-pago')?.checked;
+
         let status;
         if (isFutureIncome) {
             status = 'AGUARDANDO';
-        } else if (tipo === 'GASTO_FIXO' || tipo === 'GASTO_VARIAVEL') {
-            status = 'PENDENTE';
+        } else if (isGasto) {
+            status = (txId && isPagoCb) ? 'PAGO' : 'PENDENTE';
         } else {
             status = 'CONCLUIDO';
         }
 
         return {
             tipo,
-            moeda:               document.getElementById('currency').value,
-            valor:               parseFloat(document.getElementById('amount').value),
-            origem_destino:      origemDestino,
-            local_dinheiro:      document.getElementById('wallet').value,
-            metodo:              document.getElementById('method').value,
-            observacoes:         document.getElementById('notes').value || null,
+            moeda:            document.getElementById('currency').value,
+            valor:            parseFloat(document.getElementById('amount').value),
+            origem_destino:   origemDestino,
+            local_dinheiro:   document.getElementById('wallet').value,
+            metodo:           document.getElementById('method').value,
+            observacoes:      document.getElementById('notes').value || null,
             status,
-            data:                document.getElementById('tx-date').value,
-            due_date:            document.getElementById('due-date')?.value || null,
-            categoria:           catVal || null,
-            categoria_select:    catSel || null,
-            origem_select:       origemSel || null,
-            parcela_atual:       parseInt(document.getElementById('parcela-atual').value) || 1,
-            total_parcelas:      parseInt(document.getElementById('total-parcelas').value) || 1,
-            is_reserva:          document.getElementById('is-reserva').checked,
-            conciliado:          document.getElementById('conciliado').checked,
-            taxa_cambio_dia:     State.exchangeRate,
-            taxa_real:           parseFloat(document.getElementById('taxa-real').value) || null,
-            valor_convertido:    parseFloat(document.getElementById('valor-convertido').value) || null,
-            valor_usd:           parseFloat(document.getElementById('valor-usd')?.value) || null,
-            amount_usd_deducted: parseFloat(document.getElementById('amount-usd-deducted')?.value) || null,
+            data:             document.getElementById('tx-date').value,
+            due_date:         document.getElementById('due-date')?.value || null,
+            categoria:        catVal || null,
+            parcela_atual:    parseInt(document.getElementById('parcela-atual').value) || 1,
+            total_parcelas:   parseInt(document.getElementById('total-parcelas').value) || 1,
+            is_reserva:       document.getElementById('is-reserva').checked,
+            conciliado:       document.getElementById('conciliado').checked,
+            taxa_cambio_dia:  State.exchangeRate,
+            taxa_real:        parseFloat(document.getElementById('taxa-real').value) || null,
+            valor_convertido: parseFloat(document.getElementById('valor-convertido').value) || null,
+            valor_usd:        parseFloat(document.getElementById('valor-usd')?.value) || null,
+            currency_deducted: parseFloat(document.getElementById('amount-usd-deducted')?.value) || null,
         };
     },
 
@@ -1730,7 +1736,7 @@ const PrintReport = {
             const s = isIn ? '+' : isTr ? '⇄' : '−';
             const parcela = t.total_parcelas > 1 ? `<span style="font-size:8px;color:#6366f1;font-weight:700;margin-left:4px;">${t.parcela_atual}/${t.total_parcelas}</span>` : '';
             const status = t.status === 'PENDENTE' ? `<span style="font-size:8px;background:#fef9c3;color:#854d0e;padding:1px 4px;border-radius:3px;margin-left:4px;">⏳ Pendente</span>` : '';
-            const usdLine = t.amount_usd_deducted ? `<span style="font-size:8px;color:#7c3aed;margin-left:4px;">−$${parseFloat(t.amount_usd_deducted).toFixed(2)}</span>` : '';
+            const usdLine = t.currency_deducted ? `<span style="font-size:8px;color:#7c3aed;margin-left:4px;">−$${parseFloat(t.currency_deducted).toFixed(2)}</span>` : '';
             return `<tr>
                 <td>${fmt.date(t.data)}</td>
                 <td style="color:${c};font-weight:700">${TLBL[t.tipo]||t.tipo}</td>
