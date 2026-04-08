@@ -7,7 +7,7 @@
      • Background Sync → drain OfflineQueue when reconnected
    ============================================================ */
 
-const CACHE_NAME    = 'financas-familia-v5';
+const CACHE_NAME    = 'financas-familia-v6';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
