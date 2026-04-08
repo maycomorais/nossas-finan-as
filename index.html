@@ -87,6 +87,13 @@
                 <strong id="balance-pyg" class="balance-num">₲ 0</strong>
                 <div class="balance-sub" id="balance-pyg-reserva"></div>
             </div>
+            <div class="balance-card balance-card--wise">
+                <div class="balance-label">
+                    <span class="material-symbols-rounded">account_balance_wallet</span> Wise (USD)
+                </div>
+                <strong id="balance-usd" class="balance-num">$ 0,00</strong>
+                <div class="balance-sub" id="balance-usd-pyg"></div>
+            </div>
             <div class="balance-card">
                 <div class="balance-label">
                     <span class="material-symbols-rounded">account_balance</span> Total Geral
@@ -383,11 +390,20 @@
                         </div>
                         <div class="form-row">
                             <div class="form-field">
-                                <label class="form-label">Taxa / IOF cobrado (R$)</label>
+                                <label class="form-label" id="label-taxa-remessa">IOF + Taxas (R$)</label>
                                 <input type="number" id="taxa-real" placeholder="Ex: 12,50" step="0.01">
                             </div>
                             <div class="form-field" id="field-valor-convertido">
-                                <label class="form-label">Valor Final em ₲</label>
+                                <div style="display:flex;align-items:center;justify-content:space-between;">
+                                    <label class="form-label" id="label-conv-remessa">Valor Recebido em ₲</label>
+                                    <button type="button" id="btn-mg-recalc"
+                                            onclick="app.mgRecalcPYG()"
+                                            style="display:none;font-size:0.68rem;padding:2px 8px;border-radius:20px;
+                                                   cursor:pointer;background:var(--warning,#f59e0b);color:#fff;
+                                                   border:none;white-space:nowrap;">
+                                        ↩ Sugerir
+                                    </button>
+                                </div>
                                 <input type="number" id="valor-convertido" placeholder="Ex: 1450000" step="1"
                                        oninput="app.onValorConvertidoChange()">
                             </div>
@@ -398,7 +414,9 @@
                             <input type="number" id="valor-usd" placeholder="Ex: 45.20" step="0.01"
                                    oninput="app.onValorUSDChange()">
                         </div>
-                        <div class="rate-preview" id="rate-preview" style="display:none;"></div>
+                        <!-- Preview câmbio efetivo (MG / Wise) -->
+                        <div class="rate-preview" id="rate-preview"    style="display:none;"></div>
+                        <div class="rate-preview" id="mg-rate-preview" style="display:none;color:#d97706;background:rgba(217,119,6,0.07);border-color:#fde68a;margin-top:4px;"></div>
                     </div>
                 </div>
 
@@ -420,11 +438,14 @@
                 <!-- CARTEIRA -->
                 <div class="form-field">
                     <label class="form-label">Carteira / Onde está?</label>
-                    <select id="wallet-select" onchange="app.onWalletSelectChange()" style="display:none;">
+                    <select id="wallet-select" onchange="app.onWalletSelectChange()" required>
                         <option value="">— selecione —</option>
+                        <!-- Populado dinamicamente pelo JS (WalletStore) -->
                     </select>
-                    <input type="text" id="wallet" list="list-wallets" placeholder="Ex: Wise, Efectivo, Pix" required>
-                    <datalist id="list-wallets"></datalist>
+                    <input type="text" id="wallet-outro"
+                           placeholder="Nome da nova carteira…"
+                           style="display:none; margin-top:6px;">
+                    <input type="hidden" id="wallet">
                     <div id="wallet-balance-hint" class="wallet-hint"></div>
                 </div>
 
@@ -437,8 +458,14 @@
                     <div class="form-row">
                         <div class="form-field">
                             <label class="form-label">Carteira Destino</label>
-                            <input type="text" id="wallet-dest" list="list-wallets-dest" placeholder="Ex: Wise">
-                            <datalist id="list-wallets-dest"></datalist>
+                            <select id="wallet-dest-select" onchange="app.onWalletDestSelectChange()">
+                                <option value="">— selecione —</option>
+                                <!-- Populado dinamicamente -->
+                            </select>
+                            <input type="text" id="wallet-dest-outro"
+                                   placeholder="Nome da carteira destino…"
+                                   style="display:none; margin-top:6px;">
+                            <input type="hidden" id="wallet-dest">
                         </div>
                         <div class="form-field">
                             <label class="form-label">Moeda Destino</label>

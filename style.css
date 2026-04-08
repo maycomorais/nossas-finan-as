@@ -179,7 +179,7 @@ body {
    ============================================================ */
 .balance-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
     gap: 6px;
     margin-bottom: 8px;
 }
@@ -193,6 +193,10 @@ body {
 .balance-card--total {
     background: rgba(255,255,255,0.22);
     border-color: rgba(255,255,255,0.3);
+}
+.balance-card--wise {
+    background: rgba(167,139,250,0.22);
+    border-color: rgba(167,139,250,0.4);
 }
 .balance-label {
     display: flex;
@@ -209,7 +213,7 @@ body {
 .balance-num {
     display: block;
     font-family: 'Outfit', monospace;
-    font-size: 0.82rem;
+    font-size: 0.75rem;
     font-weight: 700;
     letter-spacing: -0.02em;
     line-height: 1.2;
@@ -640,6 +644,21 @@ select:focus, input:focus, textarea:focus {
     letter-spacing: -0.02em;
 }
 .input-amount:focus { border-color: var(--accent); }
+
+/* Moneygram: campo ₲ destino — visual proeminente com cor verde */
+.amount-block--dest {
+    margin-top: 4px;
+    text-align: center;
+}
+.input-amount--dest {
+    color: var(--success) !important;
+    border-color: #6ee7b7 !important;
+    background: #f0fdf4 !important;
+}
+.input-amount--dest:focus {
+    border-color: var(--success) !important;
+    box-shadow: 0 0 0 3px rgba(5,150,105,0.12);
+}
 input[type="file"].input-file {
     padding: 8px;
     font-size: 0.8rem;

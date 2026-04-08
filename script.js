@@ -19,7 +19,7 @@ const Config = {
     FALLBACK_USD_BRL: 5.70,
     FALLBACK_USD_PYG: 8100,
     OFFLINE_KEY:   'fm_offline_queue_v1',
-    MONEYGRAM_SPREAD: 0.0618,
+    MONEYGRAM_SPREAD: 0.045,  // ~4.5% spread real medido (ajustado pelo usuário)
     CHART_COLORS:  [
         '#ef4444','#f97316','#eab308','#22c55e','#3b82f6',
         '#8b5cf6','#ec4899','#14b8a6','#f43f5e','#6366f1',
@@ -28,11 +28,47 @@ const Config = {
     INTL_METHODS: ['Wise', 'Moneygram', 'Transferência'],
     // Carteiras que podem ter saldo negativo (cartões de crédito)
     CREDIT_CARD_WALLETS: ['Cartão', 'Nubank', 'Itaú', 'Bradesco', 'Santander', 'C6', 'Inter', 'XP'],
-    // Wise mantém saldo em USD
+    // Wise mantém saldo em USD (inclui nomes fixos)
     USD_WALLETS: ['Wise'],
+
+    // Carteiras fixas com suas moedas padrão
+    FIXED_WALLETS: [
+        { nome: 'Banco (BR)',  moeda: 'BRL', emoji: '🏦' },
+        { nome: 'Banco (PY)',  moeda: 'BRL', emoji: '🏦' },
+        { nome: 'Wise Maria',  moeda: 'USD', emoji: '💜' },
+        { nome: 'Wise Maycon', moeda: 'USD', emoji: '💜' },
+        { nome: 'Efectivo',    moeda: 'PYG', emoji: '💵' },
+    ],
+    CUSTOM_WALLETS_KEY: 'fm_custom_wallets_v1',
 };
 
 const _sb = supabase.createClient(Config.SB_URL, Config.SB_KEY);
+
+// ============================================================
+// WALLET STORE — carteiras fixas + personalizadas (localStorage)
+// ============================================================
+const WalletStore = {
+    load() {
+        try { return JSON.parse(localStorage.getItem(Config.CUSTOM_WALLETS_KEY) || '[]'); }
+        catch (_) { return []; }
+    },
+    save(arr) { localStorage.setItem(Config.CUSTOM_WALLETS_KEY, JSON.stringify(arr)); },
+    add(nome) {
+        if (!nome || Config.FIXED_WALLETS.find(w => w.nome === nome)) return;
+        const arr = this.load();
+        if (!arr.includes(nome)) { arr.push(nome); this.save(arr); }
+    },
+    all() {
+        return [
+            ...Config.FIXED_WALLETS,
+            ...this.load().map(nome => ({ nome, moeda: null, emoji: '📁' })),
+        ];
+    },
+    getCurrency(nome) {
+        const w = Config.FIXED_WALLETS.find(f => f.nome === nome);
+        return w ? w.moeda : null;
+    },
+};
 
 // ============================================================
 // FORMATTERS
@@ -294,22 +330,27 @@ const Calc = {
 
     balance(txs, moeda, { onlyAvailable = true } = {}) {
         return txs.filter(t => {
-            if (t.tipo === 'TRANSFERENCIA')  return false;
-            if (t.status === 'AGUARDANDO')   return false;
+            if (t.status === 'AGUARDANDO')     return false;
             if (onlyAvailable && t.is_reserva) return false;
-            if (t.moeda !== moeda)           return false;
-            // Para entradas: conta normalmente
-            if (t.tipo === 'ENTRADA')        return true;
-            // Para gastos: só conta se efetivado (PAGO/CONCLUIDO)
+            if (t.moeda !== moeda)             return false;
+            if (t.tipo === 'TRANSFERENCIA')    return true;  // inclui pernas de transferência
+            if (t.tipo === 'ENTRADA')          return true;
             return this._gastoEfetivado(t);
-        }).reduce((acc, t) => acc + (t.tipo === 'ENTRADA' ? t.valor : -t.valor), 0);
+        }).reduce((acc, t) => {
+            if (t.tipo === 'TRANSFERENCIA') {
+                // Perna de origem: tem wallet_dest → débito da carteira de origem
+                // Perna de destino: origem_destino começa com "De:" → crédito na carteira destino
+                const isOrigin = !!t.wallet_dest;
+                return acc + (isOrigin ? -t.valor : t.valor);
+            }
+            return acc + (t.tipo === 'ENTRADA' ? t.valor : -t.valor);
+        }, 0);
     },
 
     // Saldo de uma carteira específica (para dropdown filtering)
     walletBalance(txs, walletName) {
-        const walletTxs = txs.filter(t =>
-            t.local_dinheiro === walletName && t.tipo !== 'TRANSFERENCIA'
-        );
+        // Inclui ambas as pernas de transferência que afetam esta carteira
+        const walletTxs = txs.filter(t => t.local_dinheiro === walletName);
         return {
             BRL: this.balance(walletTxs, 'BRL', { onlyAvailable: false }),
             PYG: this.balance(walletTxs, 'PYG', { onlyAvailable: false }),
@@ -698,23 +739,28 @@ const UITotals = {
 
         this._anim('balance-brl',   signedBrl(brlD));
         this._anim('balance-pyg',   signedPyg(pygD));
+        this._anim('balance-usd',   (usdD < 0 ? '−' : '') + fmt.usd(usdD));
         this._anim('balance-total', signedPyg(total));
 
         const elBrl   = document.getElementById('balance-brl');
         const elPyg   = document.getElementById('balance-pyg');
+        const elUsd   = document.getElementById('balance-usd');
         const elTotal = document.getElementById('balance-total');
         if (elBrl)   elBrl.style.color   = brlD  < 0 ? '#fca5a5' : '';
         if (elPyg)   elPyg.style.color   = pygD  < 0 ? '#fca5a5' : '';
+        if (elUsd)   elUsd.style.color   = usdD  < 0 ? '#fca5a5' : '#a78bfa';
         if (elTotal) elTotal.style.color = total < 0 ? '#fca5a5' : '';
 
         document.getElementById('balance-brl-reserva').textContent = brlR !== 0 ? `+ ${fmt.brl(brlR)} caixinha` : '';
         const mgRate = taxa * (1 - Config.MONEYGRAM_SPREAD);
         const mgEl   = document.getElementById('balance-brl-mg');
         if (mgEl) {
-            let sub = '';
-            if (brlD !== 0) sub += `≈ ${signedPyg(brlD * mgRate)} (MG)`;
-            if (usdD !== 0) sub += (sub ? ' · ' : '') + `+ ${fmt.usd(usdD)} Wise`;
-            mgEl.textContent = sub;
+            mgEl.textContent = brlD !== 0 ? `≈ ${signedPyg(brlD * mgRate)} via MG` : '';
+        }
+        // USD Wise sub-label: equivalente em ₲
+        const usdPygEl = document.getElementById('balance-usd-pyg');
+        if (usdPygEl) {
+            usdPygEl.textContent = usdD !== 0 ? `≈ ${signedPyg(usdD * State.usdPygRate)}` : '';
         }
         document.getElementById('balance-pyg-reserva').textContent = pygR !== 0 ? `+ ${fmt.pyg(pygR)} caixinha` : '';
         document.getElementById('balance-patrimonio').textContent  = `Patrimônio: ${signedPyg(patrim)}`;
@@ -901,30 +947,42 @@ const UIDatalist = {
         const expenseWallets = allWallets.filter(w => {
             if (Config.CREDIT_CARD_WALLETS.some(cc => w.toLowerCase().includes(cc.toLowerCase()))) return true;
             const bal = State.walletBalances[w];
-            if (!bal) return true; // incluir se desconhecido
+            if (!bal) return true;
             return (bal.BRL > 0 || bal.PYG > 0 || bal.USD > 0);
         });
 
-        const fill = (id, items) => {
-            const el = document.getElementById(id);
-            if (el) el.innerHTML = items.map(v => `<option value="${v}">`).join('');
-        };
+        // Registra carteiras do DB como custom se não forem fixas
+        allWallets.forEach(w => WalletStore.add(w));
 
         // Armazena para uso no modal
         State._allWallets     = allWallets;
         State._expenseWallets = expenseWallets;
 
-        fill('list-wallets',      allWallets);
-        fill('list-wallets-dest', allWallets);
+        // Popula os selects fixos
+        this._populateWalletSelect('wallet-select');
+        this._populateWalletSelect('wallet-dest-select');
+    },
+
+    _populateWalletSelect(selectId) {
+        const sel = document.getElementById(selectId);
+        if (!sel) return;
+        const currentVal = sel.value;
+        const wallets = WalletStore.all();
+        const MOEDA_LABEL = { BRL: 'R$', USD: 'USD', PYG: '₲', null: '' };
+        sel.innerHTML = '<option value="">— selecione —</option>' +
+            wallets.map(w => {
+                const ml = w.moeda ? ` · ${MOEDA_LABEL[w.moeda] || w.moeda}` : '';
+                return `<option value="${w.nome}" data-moeda="${w.moeda || ''}">${w.emoji || '📁'} ${w.nome}${ml}</option>`;
+            }).join('') +
+            '<option value="__outro__">✏️ Outro…</option>';
+        // Restaura valor anterior se ainda existir
+        if (currentVal) sel.value = currentVal;
     },
 
     // Atualiza o datalist com base no tipo de transação
     filterForType(tipo) {
-        const isExpense = ['SAIDA', 'GASTO_FIXO', 'GASTO_VARIAVEL'].includes(tipo);
-        const wallets   = isExpense ? (State._expenseWallets || State._allWallets || []) : (State._allWallets || []);
-        const el = document.getElementById('list-wallets');
-        if (el) el.innerHTML = wallets.map(v => `<option value="${v}">`).join('');
-
+        this._populateWalletSelect('wallet-select');
+        this._populateWalletSelect('wallet-dest-select');
         // Hint de saldo
         const walletInput = document.getElementById('wallet');
         if (walletInput?.value) this.updateWalletHint(walletInput.value);
@@ -958,6 +1016,20 @@ const Modal = {
         document.getElementById('total-parcelas').value      = '1';
         document.getElementById('btn-delete').classList.add('hidden');
         document.getElementById('modal-title').textContent   = 'Novo Registro';
+        // Reset wallet controls
+        const wSel = document.getElementById('wallet-select');
+        const wOut = document.getElementById('wallet-outro');
+        const wHid = document.getElementById('wallet');
+        if (wSel) wSel.value = '';
+        if (wOut) { wOut.style.display = 'none'; wOut.value = ''; }
+        if (wHid) wHid.value = '';
+        // Reset wallet-dest controls
+        const wdSel = document.getElementById('wallet-dest-select');
+        const wdOut = document.getElementById('wallet-dest-outro');
+        const wdHid = document.getElementById('wallet-dest');
+        if (wdSel) wdSel.value = '';
+        if (wdOut) { wdOut.style.display = 'none'; wdOut.value = ''; }
+        if (wdHid) wdHid.value = '';
         this.onTypeChange();
         this._show();
     },
@@ -1013,46 +1085,94 @@ const Modal = {
     },
 
     onMethodChange() {
-        const method  = document.getElementById('method').value;
-        const tipo    = document.getElementById('type').value;
-        const currency = document.getElementById('currency').value;
-        const currDest = document.getElementById('currency-dest')?.value;
-        const isWise  = method === 'Wise';
-        const isMG    = method === 'Moneygram';
+        const method   = document.getElementById('method').value;
+        const tipo     = document.getElementById('type').value;
+        const isWise   = method === 'Wise';
+        const isMG     = method === 'Moneygram';
 
-        // Remessa block: transferência MG ou Wise
+        // Remessa block: apenas para TRANSFERENCIA Wise ou Moneygram
         const showRemessa = (isWise || isMG) && tipo === 'TRANSFERENCIA';
-        this._sf('remessa-block', showRemessa);
-        this._sf('btn-fetch-wise', isWise && showRemessa);
+        this._sf('remessa-block',   showRemessa);
+        this._sf('btn-fetch-wise',  isWise && showRemessa);
+        this._sf('mg-rate-preview', false); // reseta; _calcMoneygram reexibe se necessário
+
+        // Atualiza label do campo Valor conforme contexto
+        const amountLabelEl = document.querySelector('.amount-block .form-label');
+        if (amountLabelEl) {
+            if ((isWise || isMG) && tipo === 'TRANSFERENCIA') {
+                amountLabelEl.textContent = '💸 Valor enviado em BRL';
+            } else {
+                amountLabelEl.textContent = 'Valor';
+            }
+        }
 
         if (showRemessa) {
-            const lbl = document.getElementById('remessa-label');
-            // Wise: BRL → USD (não mais BRL → PYG)
+            const lbl     = document.getElementById('remessa-label');
+            const lblTaxa = document.getElementById('label-taxa-remessa');
+            const lblConv = document.getElementById('label-conv-remessa');
             if (isWise) {
-                lbl.textContent = '🏦 Wise — BRL → USD (cotação automática)';
-                this._sf('field-valor-usd', true);
+                if (lbl)     lbl.textContent     = '🏦 Wise — BRL → USD (cotação automática)';
+                if (lblTaxa) lblTaxa.textContent  = 'IOF + Taxas Wise (R$)';
+                if (lblConv) lblConv.textContent  = 'Valor Final em ₲';
+                this._sf('field-valor-usd',        true);
                 this._sf('field-valor-convertido', false);
             } else if (isMG) {
-                lbl.textContent = '💸 Moneygram — BRL → ₲ (spread 6,18%)';
-                this._sf('field-valor-usd', false);
+                if (lbl)     lbl.textContent     = '💸 Moneygram — BRL enviado → ₲ recebido';
+                if (lblTaxa) lblTaxa.textContent  = 'Spread cobrado em R$ (6,18%)';
+                if (lblConv) lblConv.textContent  = '₲ Valor exato a sacar no destino';
+                this._sf('field-valor-usd',        false);
                 this._sf('field-valor-convertido', true);
+                // Promove o campo ₲ visualmente (como o campo de valor principal)
+                const vcInput = document.getElementById('valor-convertido');
+                const vcField = document.getElementById('field-valor-convertido');
+                const btnMGRecalc = document.getElementById('btn-mg-recalc');
+                if (vcInput) {
+                    vcInput.classList.add('input-amount', 'input-amount--dest');
+                    vcInput.style.fontSize = '2.2rem';
+                    vcInput.style.textAlign = 'center';
+                    vcInput.placeholder = '0';
+                }
+                if (vcField) vcField.classList.add('amount-block--dest');
+                if (btnMGRecalc) btnMGRecalc.style.display = '';
+                // Reset flag → auto-sugestão será preenchida uma vez
+                this._mgUserEdited = false;
                 this._calcMoneygram();
             }
         } else {
-            this._sf('field-valor-usd', false);
+            this._sf('field-valor-usd',        false);
             this._sf('field-valor-convertido', true);
+            const lblTaxa = document.getElementById('label-taxa-remessa');
+            if (lblTaxa) lblTaxa.textContent = 'IOF + Taxas (R$)';
+            // Restaura label se mudou
+            const amountLabelEl2 = document.querySelector('.amount-block .form-label');
+            if (amountLabelEl2 && amountLabelEl2.textContent === '💸 Valor enviado em BRL') {
+                amountLabelEl2.textContent = 'Valor';
+            }
+            // Remove estilo proeminente do campo ₲ (era Moneygram)
+            const vcInput = document.getElementById('valor-convertido');
+            const vcField = document.getElementById('field-valor-convertido');
+            const btnMGRecalc = document.getElementById('btn-mg-recalc');
+            if (vcInput) {
+                vcInput.classList.remove('input-amount', 'input-amount--dest');
+                vcInput.style.fontSize = '';
+                vcInput.style.textAlign = '';
+                vcInput.placeholder = 'Ex: 1450000';
+            }
+            if (vcField) vcField.classList.remove('amount-block--dest');
+            if (btnMGRecalc) btnMGRecalc.style.display = 'none';
+            this._mgUserEdited = false;
         }
 
         this._updateWiseUSDDeductField();
     },
 
-    // Mostra campo de desconto USD quando: carteira = Wise, moeda = PYG, tipo = saída/gasto
+    // Mostra campo de desconto USD quando: carteira = Wise (qualquer), moeda = PYG, tipo = saída/gasto
     _updateWiseUSDDeductField() {
         const wallet   = document.getElementById('wallet')?.value?.trim();
         const currency = document.getElementById('currency')?.value;
         const tipo     = document.getElementById('type')?.value;
         const isExpense = ['SAIDA', 'GASTO_FIXO', 'GASTO_VARIAVEL'].includes(tipo);
-        const isWiseWallet = Config.USD_WALLETS.some(w => wallet?.toLowerCase().includes(w.toLowerCase()));
+        const isWiseWallet = wallet && Config.USD_WALLETS.some(w => wallet.toLowerCase().includes(w.toLowerCase()));
 
         const show = isExpense && currency === 'PYG' && isWiseWallet;
         this._sf('field-wise-usd-deduct', show);
@@ -1087,16 +1207,53 @@ const Modal = {
         if (sel.value !== 'Outro') outro.value = '';
     },
 
-    _calcMoneygram() {
+    // Flag: usuário editou manualmente o campo ₲ no Moneygram → não sobrescrever
+    _mgUserEdited: false,
+
+    _calcMoneygram(forceOverwrite = false) {
         const v    = parseFloat(document.getElementById('amount').value) || 0;
         const rate = State.exchangeRate;
         if (v <= 0 || !rate) return;
+        // ₲ recebidos pelo destinatário (descontado o spread)
         const resultado = Math.round(v * rate * (1 - Config.MONEYGRAM_SPREAD));
-        const taxa      = v * rate * Config.MONEYGRAM_SPREAD;
+        // Taxa em BRL = custo do spread para o remetente
+        const taxaBRL   = parseFloat((v * Config.MONEYGRAM_SPREAD).toFixed(2));
         const vcEl      = document.getElementById('valor-convertido');
         const trEl      = document.getElementById('taxa-real');
-        if (vcEl) vcEl.value = resultado;
-        if (trEl) trEl.value = taxa.toFixed(2);
+        // Só sobrescreve o campo ₲ se o usuário NÃO editou manualmente
+        if (vcEl && (!this._mgUserEdited || forceOverwrite)) {
+            vcEl.value = resultado;
+        }
+        if (trEl) trEl.value = taxaBRL;
+        // Preview câmbio efetivo — usa o valor real digitado (ou sugerido)
+        const pygReal = parseFloat(vcEl?.value) || resultado;
+        const prevMG  = document.getElementById('mg-rate-preview');
+        if (prevMG && pygReal > 0 && v > 0) {
+            const cotEfet  = pygReal / v;
+            const diffPct  = ((cotEfet / rate - 1) * 100).toFixed(1);
+            const diffSign = diffPct >= 0 ? '+' : '';
+            prevMG.style.display = 'block';
+            prevMG.textContent   = `Câmbio efetivo: R$ 1 = ₲ ${cotEfet.toFixed(0)} (${diffSign}${diffPct}% vs API ₲ ${rate.toFixed(0)})`;
+        }
+        this._updateRatePreview();
+    },
+
+    // Chamado quando usuário edita manualmente o campo ₲ do Moneygram
+    _onMGValorChange() {
+        this._mgUserEdited = true;
+        const v   = parseFloat(document.getElementById('amount')?.value) || 0;
+        const vc  = parseFloat(document.getElementById('valor-convertido')?.value) || 0;
+        const rate = State.exchangeRate;
+        const prevMG = document.getElementById('mg-rate-preview');
+        if (prevMG && v > 0 && vc > 0) {
+            const cotEfet  = vc / v;
+            const diffPct  = ((cotEfet / rate - 1) * 100).toFixed(1);
+            const diffSign = diffPct >= 0 ? '+' : '';
+            prevMG.style.display = 'block';
+            prevMG.textContent   = `Câmbio efetivo: R$ 1 = ₲ ${cotEfet.toFixed(0)} (${diffSign}${diffPct}% vs API ₲ ${rate.toFixed(0)})`;
+        } else if (prevMG) {
+            prevMG.style.display = 'none';
+        }
         this._updateRatePreview();
     },
 
@@ -1168,18 +1325,45 @@ const Modal = {
         }
     },
 
+    _restoreWalletSelect(selId, hidId, outroId, walletName) {
+        const sel  = document.getElementById(selId);
+        const hid  = document.getElementById(hidId);
+        const outro = document.getElementById(outroId);
+        if (!sel || !hid) return;
+        hid.value = walletName;
+        if (!walletName) { sel.value = ''; return; }
+        // Garante que a opção existe (pode ser custom wallet de DB)
+        const exists = [...sel.options].some(o => o.value === walletName);
+        if (!exists && walletName) {
+            WalletStore.add(walletName);
+            UIDatalist._populateWalletSelect(selId);
+        }
+        const stillExists = [...sel.options].some(o => o.value === walletName);
+        if (stillExists) {
+            sel.value = walletName;
+            if (outro) outro.style.display = 'none';
+        } else {
+            sel.value = '__outro__';
+            if (outro) { outro.style.display = ''; outro.value = walletName; }
+        }
+    },
+
     populate(t) {
         const sv = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
         sv('tx-id', t.id); sv('type', t.tipo); sv('currency', t.moeda); sv('amount', t.valor);
-        sv('tx-date', t.data); sv('wallet', t.local_dinheiro || '');
-        sv('method', t.metodo || 'Efectivo'); sv('notes', t.observacoes || '');
+        sv('tx-date', t.data); sv('method', t.metodo || 'Efectivo'); sv('notes', t.observacoes || '');
         sv('parcela-atual', t.parcela_atual || 1); sv('total-parcelas', t.total_parcelas || 1);
-        sv('wallet-dest', t.wallet_dest || ''); sv('currency-dest', t.moeda_dest || 'PYG');
+        sv('currency-dest', t.moeda_dest || 'PYG');
         sv('taxa-real', t.taxa_real || ''); sv('valor-convertido', t.valor_convertido || '');
         sv('valor-usd', t.valor_usd || '');
         sv('amount-usd-deducted', t.currency_deducted || '');
         sv('due-date', t.due_date || '');
         sv('tx-transfer-pair-id', t.transferencia_id || '');
+
+        // Restaura carteira origem via select
+        this._restoreWalletSelect('wallet-select', 'wallet', 'wallet-outro', t.local_dinheiro || '');
+        // Restaura carteira destino via select
+        this._restoreWalletSelect('wallet-dest-select', 'wallet-dest', 'wallet-dest-outro', t.wallet_dest || '');
 
         // Origem dropdown
         const origemSel = document.getElementById('origem-select');
@@ -1243,6 +1427,17 @@ const FormHandler = {
         document.getElementById('valor-convertido')?.addEventListener('input', () => Modal._updateRatePreview());
         document.getElementById('valor-usd')?.addEventListener('input', () => Modal._updateRatePreview());
         document.getElementById('amount-usd-deducted')?.addEventListener('input', () => Modal._updateWiseUSDDeductField());
+
+        // Wallet outro input → sincroniza com hidden field
+        document.getElementById('wallet-outro')?.addEventListener('input', e => {
+            document.getElementById('wallet').value = e.target.value;
+            UIDatalist.updateWalletHint(e.target.value);
+            Modal._updateWiseUSDDeductField();
+        });
+        document.getElementById('wallet-dest-outro')?.addEventListener('input', e => {
+            document.getElementById('wallet-dest').value = e.target.value;
+        });
+
         document.getElementById('wallet')?.addEventListener('input', e => {
             UIDatalist.updateWalletHint(e.target.value);
             Modal._updateWiseUSDDeductField();
@@ -1253,7 +1448,8 @@ const FormHandler = {
             Modal.onParcelasChange();
             Modal._updateRatePreview();
             const method = document.getElementById('method')?.value;
-            if (method === 'Moneygram') Modal._calcMoneygram();
+            const tipo   = document.getElementById('type')?.value;
+            if (method === 'Moneygram' && tipo === 'TRANSFERENCIA') Modal._calcMoneygram();
         });
     },
 
@@ -1264,6 +1460,26 @@ const FormHandler = {
         const url  = file ? await DB.uploadFile(file) : null;
         const base = this._payload();
         if (url) base.comprovante_url = url;
+
+        // Persiste carteiras customizadas antes de salvar
+        const wSel = document.getElementById('wallet-select');
+        if (wSel?.value === '__outro__') {
+            const customName = document.getElementById('wallet-outro')?.value?.trim();
+            if (customName) {
+                WalletStore.add(customName);
+                UIDatalist._populateWalletSelect('wallet-select');
+                UIDatalist._populateWalletSelect('wallet-dest-select');
+            }
+        }
+        const wdSel = document.getElementById('wallet-dest-select');
+        if (wdSel?.value === '__outro__') {
+            const customName = document.getElementById('wallet-dest-outro')?.value?.trim();
+            if (customName) {
+                WalletStore.add(customName);
+                UIDatalist._populateWalletSelect('wallet-select');
+                UIDatalist._populateWalletSelect('wallet-dest-select');
+            }
+        }
 
         const err = txId                    ? await DB.update(txId, base)
                   : tipo === 'TRANSFERENCIA' ? await this._saveTransfer(base)
@@ -1312,24 +1528,27 @@ const FormHandler = {
 
         return {
             tipo,
-            moeda:            document.getElementById('currency').value,
-            valor:            parseFloat(document.getElementById('amount').value),
-            origem_destino:   origemDestino,
-            local_dinheiro:   document.getElementById('wallet').value,
-            metodo:           document.getElementById('method').value,
-            observacoes:      document.getElementById('notes').value || null,
+            moeda:             document.getElementById('currency').value,
+            valor:             parseFloat(document.getElementById('amount').value),
+            origem_destino:    origemDestino,
+            local_dinheiro:    document.getElementById('wallet').value,
+            metodo:            document.getElementById('method').value,
+            observacoes:       document.getElementById('notes').value || null,
             status,
-            data:             document.getElementById('tx-date').value,
-            due_date:         document.getElementById('due-date')?.value || null,
-            categoria:        catVal || null,
-            parcela_atual:    parseInt(document.getElementById('parcela-atual').value) || 1,
-            total_parcelas:   parseInt(document.getElementById('total-parcelas').value) || 1,
-            is_reserva:       document.getElementById('is-reserva').checked,
-            conciliado:       document.getElementById('conciliado').checked,
-            taxa_cambio_dia:  State.exchangeRate,
-            taxa_real:        parseFloat(document.getElementById('taxa-real').value) || null,
-            valor_convertido: parseFloat(document.getElementById('valor-convertido').value) || null,
-            valor_usd:        parseFloat(document.getElementById('valor-usd')?.value) || null,
+            data:              document.getElementById('tx-date').value,
+            due_date:          document.getElementById('due-date')?.value || null,
+            categoria:         catVal || null,
+            // Salva seleção dos dropdowns para restaurar corretamente ao editar
+            origem_select:     document.getElementById('origem-select')?.value || null,
+            categoria_select:  document.getElementById('categoria')?.value     || null,
+            parcela_atual:     parseInt(document.getElementById('parcela-atual').value)  || 1,
+            total_parcelas:    parseInt(document.getElementById('total-parcelas').value) || 1,
+            is_reserva:        document.getElementById('is-reserva').checked,
+            conciliado:        document.getElementById('conciliado').checked,
+            taxa_cambio_dia:   State.exchangeRate,
+            taxa_real:         parseFloat(document.getElementById('taxa-real').value)            || null,
+            valor_convertido:  parseFloat(document.getElementById('valor-convertido').value)     || null,
+            valor_usd:         parseFloat(document.getElementById('valor-usd')?.value)           || null,
             currency_deducted: parseFloat(document.getElementById('amount-usd-deducted')?.value) || null,
         };
     },
@@ -1359,15 +1578,20 @@ const FormHandler = {
         let valorDest, mDestFinal;
 
         if (isWise) {
-            // Wise: BRL → USD
+            // Wise: BRL → USD  (IOF e taxas capturados em taxa_real em BRL)
             const usdVal = parseFloat(document.getElementById('valor-usd')?.value);
             valorDest    = usdVal > 0 ? usdVal : base.valor / State.usdBrlRate;
             mDestFinal   = 'USD';
         } else if (isMG) {
-            // Moneygram: BRL → PYG
+            // Moneygram: BRL enviado → ₲ recebido
+            // valor-convertido = ₲ recebidos; taxa-real = spread em BRL (6,18% do valor)
             const vcVal = parseFloat(document.getElementById('valor-convertido').value);
             valorDest   = vcVal > 0 ? vcVal : Math.round(base.valor * State.exchangeRate * (1 - Config.MONEYGRAM_SPREAD));
             mDestFinal  = 'PYG';
+            // Garantia: taxa_real sempre em BRL (não em ₲)
+            if (!base.taxa_real || base.taxa_real > base.valor) {
+                base = { ...base, taxa_real: parseFloat((base.valor * Config.MONEYGRAM_SPREAD).toFixed(2)) };
+            }
         } else {
             valorDest  = parseFloat(document.getElementById('valor-convertido').value) || base.valor;
             mDestFinal = mDest;
@@ -1401,6 +1625,9 @@ const app = {
         this._setDefaultDate();
         UILoading.show();
         await ExchangeAPI.fetch();
+        // Pré-popula wallet selects com as carteiras fixas antes do primeiro fetchData
+        UIDatalist._populateWalletSelect('wallet-select');
+        UIDatalist._populateWalletSelect('wallet-dest-select');
         await this.fetchData();
         FormHandler.setup();
         this._registerSW();
@@ -1498,16 +1725,86 @@ const app = {
     onMethodChange()       { Modal.onMethodChange(); },
     onOrigemChange()       { Modal.onOrigemChange(); },
     onCategoriaChange()    { Modal.onCategoriaChange(); },
-    onValorConvertidoChange() { Modal._updateRatePreview(); },
+    onValorConvertidoChange() {
+        const method = document.getElementById('method')?.value;
+        const tipo   = document.getElementById('type')?.value;
+        if (method === 'Moneygram' && tipo === 'TRANSFERENCIA') {
+            Modal._onMGValorChange();
+        } else {
+            Modal._updateRatePreview();
+        }
+    },
     onValorUSDChange()     { Modal._updateRatePreview(); },
     onWalletSelectChange() {
-        const sel = document.getElementById('wallet-select');
-        const inp = document.getElementById('wallet');
-        if (sel && inp && sel.value) inp.value = sel.value;
-        UIDatalist.updateWalletHint(inp?.value);
+        const sel   = document.getElementById('wallet-select');
+        const outro = document.getElementById('wallet-outro');
+        const hid   = document.getElementById('wallet');
+        if (!sel) return;
+
+        if (sel.value === '__outro__') {
+            if (outro) { outro.style.display = ''; outro.focus(); }
+            if (hid)   hid.value = outro?.value || '';
+        } else {
+            if (outro) { outro.style.display = 'none'; outro.value = ''; }
+            if (hid)   hid.value = sel.value;
+
+            // Auto-define moeda com base na carteira selecionada
+            const moeda = WalletStore.getCurrency(sel.value);
+            if (moeda) {
+                const currEl = document.getElementById('currency');
+                if (currEl && currEl.value !== moeda) {
+                    currEl.value = moeda;
+                    Modal.onCurrencyChange();
+                }
+            }
+        }
+
+        UIDatalist.updateWalletHint(hid?.value);
         Modal._updateWiseUSDDeductField();
     },
+
+    onWalletDestSelectChange() {
+        const sel   = document.getElementById('wallet-dest-select');
+        const outro = document.getElementById('wallet-dest-outro');
+        const hid   = document.getElementById('wallet-dest');
+        if (!sel) return;
+
+        if (sel.value === '__outro__') {
+            if (outro) { outro.style.display = ''; outro.focus(); }
+            if (hid)   hid.value = outro?.value || '';
+        } else {
+            if (outro) { outro.style.display = 'none'; outro.value = ''; }
+            if (hid)   hid.value = sel.value;
+
+            // Auto-define moeda destino com base na carteira selecionada
+            const moeda = WalletStore.getCurrency(sel.value);
+            if (moeda) {
+                const currDestEl = document.getElementById('currency-dest');
+                if (currDestEl) currDestEl.value = moeda;
+            }
+
+            // Auto-define MÉTODO com base na carteira destino
+            const tipo     = document.getElementById('type')?.value;
+            const methodEl = document.getElementById('method');
+            if (methodEl && tipo === 'TRANSFERENCIA') {
+                const destName = sel.value.toLowerCase();
+                if (destName === 'moneygram') {
+                    methodEl.value = 'Moneygram';
+                    Modal.onMethodChange();
+                } else if (destName.startsWith('wise')) {
+                    methodEl.value = 'Wise';
+                    Modal.onMethodChange();
+                }
+            }
+        }
+    },
     fetchWiseQuote()       { return Modal.fetchWiseQuote(); },
+    // Força re-cálculo automático do ₲ (Moneygram) — desfaz edição manual
+    mgRecalcPYG() {
+        Modal._mgUserEdited = false;
+        Modal._calcMoneygram(true);
+        UIToast.show('💡 Sugestão de ₲ preenchida com spread de 6,18%', 'info', 3000);
+    },
 
     // Marca um gasto como PAGO, registra data efetiva e atualiza saldo
     async markAsPaid(id) {
@@ -1780,12 +2077,12 @@ const PrintReport = {
 body{font-family:'Segoe UI',Arial,sans-serif;font-size:11px;color:#1e1b4b;padding:16px}
 .hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #4f46e5;padding-bottom:10px;margin-bottom:14px}
 .hdr-title{font-size:18px;font-weight:800;color:#4f46e5}
-.cards{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:14px}
+.cards{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:14px}
 .card{border:1.5px solid #e0e7ff;border-radius:8px;padding:7px 9px}
 .card h4{font-size:7px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:3px}
 .card strong{font-size:11px;font-weight:800;display:block}
 .green strong{color:#15803d}.red strong{color:#dc2626}.blue strong{color:#1d4ed8}
-.purple strong{color:#4f46e5}.amber strong{color:#b45309}.orange strong{color:#ea580c}
+.purple strong{color:#4f46e5}.amber strong{color:#b45309}.orange strong{color:#ea580c}.violet strong{color:#7c3aed}
 .section-title{font-size:11px;font-weight:700;color:#4f46e5;margin:12px 0 6px;padding-bottom:3px;border-bottom:1.5px solid #e0e7ff}
 .chart-section{display:grid;grid-template-columns:180px 1fr;gap:16px;margin-bottom:14px;align-items:start}
 .chart-wrap{position:relative;width:180px;height:180px}
@@ -1817,6 +2114,7 @@ td{padding:4px 6px;vertical-align:middle}
   <div class="card ${res >= 0 ? 'blue' : 'red'}"><h4>Resultado</h4><strong>${sign(res,fmt.pyg)}</strong></div>
   <div class="card purple"><h4>Saldo R$</h4><strong>${sign(brlD,fmt.brl)}</strong></div>
   <div class="card amber"><h4>Saldo ₲</h4><strong>${sign(pygD,fmt.pyg)}</strong></div>
+  <div class="card violet"><h4>Wise USD</h4><strong>${fmt.usd(Calc.balance(State.transactions,'USD',{onlyAvailable:true}))}</strong></div>
   <div class="card orange"><h4>⚡ Comprometido</h4><strong>${fmt.pyg(comp.total)}</strong></div>
 </div>
 
