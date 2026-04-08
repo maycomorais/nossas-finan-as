@@ -6,37 +6,34 @@
     <title>Finanças Família</title>
     <link rel="shortcut icon" href="https://i.ibb.co/XZ010Lb7/famila.png" type="image/x-icon">
 
-    <!-- ===== PWA: Android / Chrome ===== -->
+    <!-- PWA: Android / Chrome -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#4f46e5">
 
-    <!-- ===== PWA: iOS Safari (iPhone / iPad) ===== -->
-    <!-- Sem essas tags o iOS ignora o manifest.json completamente -->
+    <!-- PWA: iOS Safari -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Finanças">
-    <!-- Ícone que aparece na tela inicial do iPhone -->
     <link rel="apple-touch-icon" href="https://i.ibb.co/XZ010Lb7/famila.png">
-    <!-- Splash screen cor de fundo enquanto carrega (iOS) -->
     <meta name="msapplication-TileColor" content="#4f46e5">
 
-    <!-- ===== Fonts ===== -->
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
 
-    <!-- ===== App CSS / JS ===== -->
+    <!-- App CSS / JS -->
     <link rel="stylesheet" href="style.css">
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
-    <!-- ===== TOAST CONTAINER ===== -->
+    <!-- TOAST CONTAINER -->
     <div id="toast-container" aria-live="polite"></div>
 
-    <!-- ===== PWA INSTALL BANNER ===== -->
+    <!-- PWA INSTALL BANNER -->
     <div id="install-banner" class="install-banner" style="display:none;">
         <img src="https://i.ibb.co/XZ010Lb7/famila.png" alt="ícone" class="install-banner__icon">
         <div class="install-banner__text">
@@ -49,14 +46,14 @@
                 onclick="PWAInstall.install()">Instalar</button>
     </div>
 
-    <!-- ===== OFFLINE SYNC BANNER ===== -->
+    <!-- OFFLINE SYNC BANNER -->
     <div id="offline-banner" class="offline-banner" style="display:none;" onclick="OfflineQueue.drain()">
         <span class="material-symbols-rounded">cloud_sync</span>
         <span id="offline-banner-text">Operações aguardando sincronização</span>
         <span class="material-symbols-rounded" style="font-size:15px;opacity:0.7;">touch_app</span>
     </div>
 
-    <!-- ===== HEADER ===== -->
+    <!-- HEADER -->
     <header class="main-header">
         <div class="header-top">
             <div class="header-brand">
@@ -64,7 +61,6 @@
                 <h1>Finanças Família</h1>
             </div>
             <div class="header-right">
-                <!-- Connection status dot -->
                 <span class="conn-dot conn-dot--online" id="conn-dot" title="Online"></span>
                 <div class="cambio-badge">
                     <span class="material-symbols-rounded" style="font-size:13px;">currency_exchange</span>
@@ -74,7 +70,7 @@
             </div>
         </div>
 
-        <!-- 3 BALANCE CARDS -->
+        <!-- BALANCE CARDS (3 saldos + 1 comprometido) -->
         <div class="balance-grid">
             <div class="balance-card">
                 <div class="balance-label">
@@ -82,7 +78,7 @@
                 </div>
                 <strong id="balance-brl" class="balance-num">R$ 0,00</strong>
                 <div class="balance-sub" id="balance-brl-reserva"></div>
-                <div class="balance-sub balance-sub--mg" id="balance-brl-mg" title="Equivalente via Moneygram (spread 4,2%)"></div>
+                <div class="balance-sub balance-sub--mg" id="balance-brl-mg" title="Equivalente via Moneygram (spread 6,18%)"></div>
             </div>
             <div class="balance-card">
                 <div class="balance-label">
@@ -91,7 +87,7 @@
                 <strong id="balance-pyg" class="balance-num">₲ 0</strong>
                 <div class="balance-sub" id="balance-pyg-reserva"></div>
             </div>
-            <div class="balance-card balance-card--total">
+            <div class="balance-card">
                 <div class="balance-label">
                     <span class="material-symbols-rounded">account_balance</span> Total Geral
                 </div>
@@ -100,17 +96,40 @@
             </div>
         </div>
 
+        <!-- COMPROMETIDO ROW -->
+        <div class="comprometido-row" id="comprometido-row">
+            <div class="comprometido-card comprometido-card--fixos">
+                <span class="comprometido-label">G. Fixos</span>
+                <strong id="comp-fixos">₲ 0</strong>
+            </div>
+            <div class="comprometido-card comprometido-card--variaveis">
+                <span class="comprometido-label">G. Variáveis</span>
+                <strong id="comp-variaveis">₲ 0</strong>
+            </div>
+            <div class="comprometido-card comprometido-card--dividas">
+                <span class="comprometido-label">Dívidas</span>
+                <strong id="comp-dividas">₲ 0</strong>
+            </div>
+            <div class="comprometido-card comprometido-card--total">
+                <span class="comprometido-label">⚡ Comprometido</span>
+                <strong id="comp-total">₲ 0</strong>
+            </div>
+        </div>
+
         <div class="quick-actions">
             <button onclick="app.openModal('TRANSFERENCIA')" class="btn-action btn-transfer">
                 <span class="material-symbols-rounded">swap_horiz</span> Transferir
             </button>
-            <button onclick="app.openModal('DIVIDA')" class="btn-action btn-debt">
-                <span class="material-symbols-rounded">calendar_month</span> Agendar
+            <button onclick="app.openModal('GASTO_FIXO')" class="btn-action btn-fixo">
+                <span class="material-symbols-rounded">repeat</span> Fixo
+            </button>
+            <button onclick="app.openModal('GASTO_VARIAVEL')" class="btn-action btn-variavel">
+                <span class="material-symbols-rounded">receipt_long</span> Variável
             </button>
         </div>
     </header>
 
-    <!-- ===== TABS ===== -->
+    <!-- TABS -->
     <div class="tabs-nav">
         <button class="tab-btn active" onclick="app.switchTab('lista', this)">
             <span class="material-symbols-rounded">list_alt</span> Movimentações
@@ -120,14 +139,14 @@
         </button>
     </div>
 
-    <!-- ===== VIEW: LISTA ===== -->
+    <!-- VIEW: LISTA -->
     <div id="view-lista" class="view-section active-view">
         <nav class="filter-bar">
             <button onclick="app.filterType('TUDO', this)"           class="chip active">Tudo</button>
             <button onclick="app.filterType('ENTRADA', this)"        class="chip">Entradas</button>
             <button onclick="app.filterType('GASTO_FIXO', this)"     class="chip">G. Fixos</button>
             <button onclick="app.filterType('GASTO_VARIAVEL', this)" class="chip">G. Variáveis</button>
-            <button onclick="app.filterType('DIVIDA', this)"         class="chip">Dívidas</button>
+            <button onclick="app.filterType('DIVIDA', this)"         class="chip">⏳ Dívidas</button>
             <button onclick="app.filterType('TRANSFERENCIA', this)"  class="chip">Transferências</button>
             <button onclick="app.filterType('RECEITA_FUTURA', this)" class="chip chip--future" data-filter="RECEITA_FUTURA">📅 Aguardando</button>
         </nav>
@@ -145,7 +164,7 @@
         </div>
     </div>
 
-    <!-- ===== VIEW: DASHBOARD ===== -->
+    <!-- VIEW: DASHBOARD -->
     <div id="view-dashboard" class="view-section hidden-view">
 
         <!-- P&L Cards -->
@@ -163,6 +182,18 @@
                     <span class="pl-label">Resultado</span>
                     <strong id="dash-resultado">₲ 0</strong>
                 </div>
+            </div>
+        </div>
+
+        <!-- Total Comprometido Dashboard Card -->
+        <div class="dash-section">
+            <div class="comprometido-dash-card" id="comprometido-dash">
+                <div class="comprometido-dash-header">
+                    <span class="material-symbols-rounded">pending_actions</span>
+                    <span>Total Comprometido (Pendente)</span>
+                    <strong id="dash-comp-total" style="margin-left:auto;">₲ 0</strong>
+                </div>
+                <div class="comprometido-dash-breakdown" id="comprometido-dash-breakdown"></div>
             </div>
         </div>
 
@@ -232,9 +263,8 @@
             </div>
         </div>
 
-        <!-- Print FAB for Dashboard -->
         <div class="fab-group">
-            <button onclick="app.printReport()" class="fab fab--print" title="Imprimir / PDF (com filtros do dashboard)">
+            <button onclick="app.printReport()" class="fab fab--print" title="Imprimir / PDF">
                 <span class="material-symbols-rounded">print</span>
             </button>
         </div>
@@ -261,7 +291,6 @@
                             <option value="ENTRADA">↑ Entrada</option>
                             <option value="GASTO_FIXO">🔄 Gasto Fixo</option>
                             <option value="GASTO_VARIAVEL" selected>📦 Gasto Variável</option>
-                            <option value="DIVIDA">⏳ Dívida</option>
                             <option value="TRANSFERENCIA">⇄ Transferência</option>
                             <option value="SAIDA" style="color:#94a3b8;">↓ Saída (legado)</option>
                         </select>
@@ -276,21 +305,15 @@
                     </div>
                 </div>
 
-                <!-- DATA + STATUS -->
+                <!-- DATA + VENCIMENTO -->
                 <div class="form-row">
                     <div class="form-field">
-                        <label class="form-label">Data</label>
+                        <label class="form-label">Data / Competência</label>
                         <input type="date" id="tx-date" required>
                     </div>
-                    <div class="form-field" id="field-status" style="display:none;">
-                        <label class="form-label">Status</label>
-                        <select id="status" style="background:#fef9c3;">
-                            <option value="PENDENTE">⏳ Pendente</option>
-                            <option value="NEGOCIADA">🤝 Negociado</option>
-                            <option value="EM_ANDAMENTO">🔄 Em Andamento</option>
-                            <option value="QUITADA">✅ Quitado</option>
-                            <option value="CANCELADA">❌ Cancelada</option>
-                        </select>
+                    <div class="form-field" id="field-due-date">
+                        <label class="form-label">Vencimento</label>
+                        <input type="date" id="due-date" placeholder="Opcional">
                     </div>
                 </div>
 
@@ -300,7 +323,7 @@
                     <input type="number" id="amount" placeholder="0,00" step="0.01" class="input-amount" required>
                 </div>
 
-                <!-- ORIGEM (visível para ENTRADA / DIVIDA / TRANSFERENCIA) -->
+                <!-- ORIGEM (ENTRADA / TRANSFERENCIA) -->
                 <div class="form-field" id="field-origem" style="display:none;">
                     <label class="form-label">Origem / Negócio</label>
                     <select id="origem-select" onchange="app.onOrigemChange()">
@@ -310,6 +333,7 @@
                         <option value="LinkPy">🔗 LinkPy</option>
                         <option value="Congelados">🧊 Congelados</option>
                         <option value="Serviços Dev">💻 Serviços Dev</option>
+                        <option value="Contribuição Pedro Henrique">👤 Contribuição Pedro Henrique</option>
                         <option value="Outro">✏️ Outro…</option>
                     </select>
                     <input type="text" id="origem-outro"
@@ -317,7 +341,7 @@
                            style="display:none; margin-top:6px;">
                 </div>
 
-                <!-- CATEGORIA (visível para SAIDA) -->
+                <!-- CATEGORIA (SAIDA + GASTO_FIXO + GASTO_VARIAVEL) -->
                 <div class="form-field" id="field-categoria" style="display:none;">
                     <label class="form-label">Categoria</label>
                     <select id="categoria" onchange="app.onCategoriaChange()">
@@ -326,8 +350,13 @@
                         <option value="Mercado">🛒 Mercado</option>
                         <option value="Educação">📚 Educação</option>
                         <option value="Transporte">🚗 Transporte</option>
-                        <option value="Diversos">📦 Diversos</option>
                         <option value="Farmácia">💊 Farmácia</option>
+                        <option value="Lazer">🎉 Lazer</option>
+                        <option value="Streaming">📺 Streaming</option>
+                        <option value="Saúde">🏥 Saúde</option>
+                        <option value="Alimentação">🍽️ Alimentação</option>
+                        <option value="Vestuário">👕 Vestuário</option>
+                        <option value="Diversos">📦 Diversos</option>
                         <option value="Outro">✏️ Outro…</option>
                     </select>
                     <input type="text" id="categoria-outro"
@@ -335,24 +364,7 @@
                            style="display:none; margin-top:6px;">
                 </div>
 
-                <!-- CAMPOS DÍVIDA -->
-                <div id="field-tipo-divida" style="display:none;">
-                    <div class="form-row">
-                        <div class="form-field">
-                            <label class="form-label">🌍 País da Dívida</label>
-                            <select id="pais-divida">
-                                <option value="PY">🇵🇾 Paraguai</option>
-                                <option value="BR">🇧🇷 Brasil</option>
-                            </select>
-                        </div>
-                        <div class="form-field">
-                            <label class="form-label">Credor</label>
-                            <input type="text" id="credor" placeholder="Ex: Banco, Loja…">
-                        </div>
-                    </div>
-                </div>
-
-                <!-- WISE / MONEYGRAM AUTO-FILL BLOCK -->
+                <!-- WISE / MONEYGRAM BLOCK -->
                 <div id="remessa-block" style="display:none;">
                     <div class="intl-rate-block">
                         <div class="intl-rate-header">
@@ -371,21 +383,46 @@
                                 <label class="form-label">Taxa / IOF cobrado (R$)</label>
                                 <input type="number" id="taxa-real" placeholder="Ex: 12,50" step="0.01">
                             </div>
-                            <div class="form-field">
+                            <div class="form-field" id="field-valor-convertido">
                                 <label class="form-label">Valor Final em ₲</label>
                                 <input type="number" id="valor-convertido" placeholder="Ex: 1450000" step="1"
                                        oninput="app.onValorConvertidoChange()">
                             </div>
                         </div>
+                        <!-- Wise BRL→USD: shows target amount in USD -->
+                        <div class="form-field" id="field-valor-usd" style="display:none;">
+                            <label class="form-label">💵 Valor chegando em USD (Wise)</label>
+                            <input type="number" id="valor-usd" placeholder="Ex: 45.20" step="0.01"
+                                   oninput="app.onValorUSDChange()">
+                        </div>
                         <div class="rate-preview" id="rate-preview" style="display:none;"></div>
+                    </div>
+                </div>
+
+                <!-- WISE USD DEDUCTION (saída PYG paga com USD Wise) -->
+                <div id="field-wise-usd-deduct" style="display:none;">
+                    <div class="intl-rate-block" style="background:#fdf4ff;border-color:#e9d5ff;">
+                        <div class="intl-rate-header" style="color:#7c3aed;">
+                            <span class="material-symbols-rounded">attach_money</span>
+                            <span>Gasto via Wise (USD → ₲)</span>
+                        </div>
+                        <div class="form-field">
+                            <label class="form-label">Valor descontado na Wise (USD)</label>
+                            <input type="number" id="amount-usd-deducted" placeholder="Ex: 12.50" step="0.01">
+                        </div>
+                        <div class="rate-preview" id="wise-usd-preview" style="display:none;color:#7c3aed;background:rgba(124,58,237,0.06);border-color:#e9d5ff;"></div>
                     </div>
                 </div>
 
                 <!-- CARTEIRA -->
                 <div class="form-field">
                     <label class="form-label">Carteira / Onde está?</label>
+                    <select id="wallet-select" onchange="app.onWalletSelectChange()" style="display:none;">
+                        <option value="">— selecione —</option>
+                    </select>
                     <input type="text" id="wallet" list="list-wallets" placeholder="Ex: Wise, Efectivo, Pix" required>
                     <datalist id="list-wallets"></datalist>
+                    <div id="wallet-balance-hint" class="wallet-hint"></div>
                 </div>
 
                 <!-- TRANSFERÊNCIA -->
@@ -397,7 +434,7 @@
                     <div class="form-row">
                         <div class="form-field">
                             <label class="form-label">Carteira Destino</label>
-                            <input type="text" id="wallet-dest" list="list-wallets-dest" placeholder="Ex: Moneygram">
+                            <input type="text" id="wallet-dest" list="list-wallets-dest" placeholder="Ex: Wise">
                             <datalist id="list-wallets-dest"></datalist>
                         </div>
                         <div class="form-field">
@@ -411,7 +448,7 @@
                     </div>
                 </div>
 
-                <!-- PARCELAMENTO -->
+                <!-- PARCELAMENTO (GASTO_VARIAVEL) -->
                 <div class="form-field" id="field-parcelas" style="display:none;">
                     <label class="form-label">
                         <span class="material-symbols-rounded" style="font-size:14px;">calendar_month</span>
@@ -420,18 +457,18 @@
                     <div class="form-row" style="margin-top:4px;">
                         <div class="form-field">
                             <label class="form-label" style="font-size:0.68rem;">Parcela Atual</label>
-                            <input type="number" id="parcela-atual" value="1" min="1" max="24">
+                            <input type="number" id="parcela-atual" value="1" min="1" max="60">
                         </div>
                         <div class="form-field">
                             <label class="form-label" style="font-size:0.68rem;">Total de Parcelas</label>
-                            <input type="number" id="total-parcelas" value="1" min="1" max="24"
+                            <input type="number" id="total-parcelas" value="1" min="1" max="60"
                                    onchange="app.onParcelasChange()">
                         </div>
                     </div>
                     <div class="parcelas-preview" id="parcelas-preview" style="display:none;"></div>
                 </div>
 
-                <!-- RECORRÊNCIA — só para GASTO_FIXO -->
+                <!-- RECORRÊNCIA (GASTO_FIXO) -->
                 <div class="form-field" id="field-recorrente" style="display:none;">
                     <label class="reserva-toggle">
                         <input type="checkbox" id="is-recorrente">
