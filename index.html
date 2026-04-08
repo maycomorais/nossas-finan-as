@@ -151,15 +151,18 @@
             <button onclick="app.filterType('RECEITA_FUTURA', this)" class="chip chip--future" data-filter="RECEITA_FUTURA">📅 Aguardando</button>
         </nav>
         <main id="transaction-list" class="list-container"></main>
-        <div class="fab-group">
-            <button onclick="app.printReport()" class="fab fab--print" title="Imprimir / PDF">
+        <div class="bottom-bar">
+            <button onclick="app.printReport()" class="bottom-bar-btn bottom-bar-btn--print">
                 <span class="material-symbols-rounded">print</span>
+                Imprimir
             </button>
-            <button onclick="app.openModal('ENTRADA')" class="fab fab--entrada" title="Nova Entrada">
-                <span class="material-symbols-rounded">add</span>
+            <button onclick="app.openModal('ENTRADA')" class="bottom-bar-btn bottom-bar-btn--entrada">
+                <span class="material-symbols-rounded">add_circle</span>
+                Receita
             </button>
-            <button onclick="app.openModal('SAIDA')" class="fab fab--saida" title="Nova Saída">
-                <span class="material-symbols-rounded">remove</span>
+            <button onclick="app.openModal('SAIDA')" class="bottom-bar-btn bottom-bar-btn--saida">
+                <span class="material-symbols-rounded">remove_circle</span>
+                Despesa
             </button>
         </div>
     </div>

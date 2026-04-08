@@ -41,7 +41,7 @@ body {
     color: var(--text);
     font-family: 'Figtree', -apple-system, sans-serif;
     font-size: 15px;
-    padding-bottom: 100px;
+    padding-bottom: 82px;
     min-height: 100dvh;
 }
 
@@ -120,7 +120,7 @@ body {
 .main-header {
     background: linear-gradient(145deg, #3730a3 0%, #4f46e5 60%, #6366f1 100%);
     color: white;
-    padding: 20px 18px 18px;
+    padding: 10px 14px 12px;
     border-radius: 0 0 var(--radius-xl) var(--radius-xl);
     position: sticky;
     top: 0;
@@ -131,7 +131,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 10px;
 }
 .header-brand {
     display: flex;
@@ -180,13 +180,13 @@ body {
 .balance-grid {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    gap: 8px;
-    margin-bottom: 14px;
+    gap: 6px;
+    margin-bottom: 8px;
 }
 .balance-card {
     background: rgba(255,255,255,0.12);
     border: 1px solid rgba(255,255,255,0.18);
-    padding: 10px 11px;
+    padding: 7px 9px;
     border-radius: var(--radius-md);
     backdrop-filter: blur(6px);
 }
@@ -198,18 +198,18 @@ body {
     display: flex;
     align-items: center;
     gap: 4px;
-    font-size: 0.6rem;
+    font-size: 0.58rem;
     opacity: 0.8;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     font-weight: 600;
-    margin-bottom: 6px;
+    margin-bottom: 3px;
 }
 .balance-label .material-symbols-rounded { font-size: 12px; }
 .balance-num {
     display: block;
     font-family: 'Outfit', monospace;
-    font-size: 0.88rem;
+    font-size: 0.82rem;
     font-weight: 700;
     letter-spacing: -0.02em;
     line-height: 1.2;
@@ -237,7 +237,7 @@ body {
     flex: 1;
     border: 1px dashed rgba(255,255,255,0.4);
     color: white;
-    padding: 9px 10px;
+    padding: 7px 8px;
     border-radius: var(--radius-md);
     display: flex;
     align-items: center;
@@ -245,10 +245,11 @@ body {
     gap: 5px;
     font-family: 'Figtree', sans-serif;
     font-weight: 600;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     cursor: pointer;
     transition: background 0.2s;
 }
+.btn-action .material-symbols-rounded { font-size: 16px; }
 .btn-action:active { background: rgba(255,255,255,0.15); }
 .btn-transfer { background: rgba(8,145,178,0.3); border-color: rgba(8,145,178,0.5); }
 .btn-debt     { background: rgba(217,119,6,0.25); border-color: rgba(217,119,6,0.4); }
@@ -501,35 +502,45 @@ body {
 .has-photo { cursor:pointer; color:var(--primary); font-size:14px; vertical-align:middle; }
 
 /* ============================================================
-   FAB
+   BOTTOM ACTION BAR (substituiu os FABs flutuantes)
    ============================================================ */
-.fab-group {
+.bottom-bar {
     position: fixed;
-    bottom: 24px;
-    right: 20px;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+    padding: 10px 16px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 10;
+    box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
+}
+.bottom-bar-btn {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    z-index: 10;
-}
-.fab {
-    width: 52px;
-    height: 52px;
-    border-radius: 16px;
-    border: none;
-    color: white;
-    display: flex;
     align-items: center;
     justify-content: center;
+    gap: 3px;
+    padding: 8px 4px;
+    border-radius: var(--radius-md);
+    border: none;
     cursor: pointer;
-    box-shadow: 0 6px 16px rgba(0,0,0,0.22);
-    font-size: 22px;
-    transition: transform 0.15s;
+    font-family: 'Figtree', sans-serif;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    transition: opacity 0.15s, transform 0.15s;
 }
-.fab:active { transform: scale(0.93); }
-.fab--entrada { background: var(--success); }
-.fab--saida   { background: var(--danger); }
-.fab .material-symbols-rounded { font-size: 24px; }
+.bottom-bar-btn:active { transform: scale(0.94); opacity: 0.8; }
+.bottom-bar-btn .material-symbols-rounded { font-size: 22px; }
+.bottom-bar-btn--print   { background: var(--primary-light); color: var(--primary); }
+.bottom-bar-btn--entrada { background: var(--success-bg);    color: var(--success); }
+.bottom-bar-btn--saida   { background: var(--danger-bg);     color: var(--danger); }
 
 /* ============================================================
    MODAL
@@ -1312,30 +1323,30 @@ input[type="file"].input-file {
 .comprometido-row {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr 1fr;
-    gap: 6px;
-    margin-bottom: 14px;
+    gap: 5px;
+    margin-bottom: 10px;
 }
 .comprometido-card {
     background: rgba(255,255,255,0.1);
     border: 1px solid rgba(255,255,255,0.18);
     border-radius: var(--radius-md);
-    padding: 7px 8px;
+    padding: 5px 6px;
     text-align: center;
 }
 .comprometido-label {
     display: block;
-    font-size: 0.55rem;
+    font-size: 0.5rem;
     opacity: 0.75;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     font-weight: 700;
     color: white;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 .comprometido-card strong {
     display: block;
     font-family: 'Outfit', monospace;
-    font-size: 0.75rem;
+    font-size: 0.7rem;
     font-weight: 800;
     color: white;
     letter-spacing: -0.01em;
