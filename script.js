@@ -1101,6 +1101,13 @@ const Modal = {
         if (amountLabelEl) {
             if ((isWise || isMG) && tipo === 'TRANSFERENCIA') {
                 amountLabelEl.textContent = '💸 Valor enviado em BRL';
+                // FIX: Força o select de moeda origem para BRL visualmente,
+                // evitando que o usuário envie com moeda errada sem perceber.
+                const currEl = document.getElementById('currency');
+                if (currEl && currEl.value !== 'BRL') {
+                    currEl.value = 'BRL';
+                    Modal.onCurrencyChange();
+                }
             } else {
                 amountLabelEl.textContent = 'Valor';
             }
@@ -1574,6 +1581,13 @@ const FormHandler = {
         const method = document.getElementById('method').value;
         const isWise = method === 'Wise';
         const isMG   = method === 'Moneygram';
+
+        // FIX: Wise e Moneygram enviam SEMPRE em BRL.
+        // Se #currency estiver em PYG (padrão do HTML), a perna de saída
+        // seria salva com moeda:'PYG' e nunca debitaria o saldo BRL.
+        if (isWise || isMG) {
+            base = { ...base, moeda: 'BRL' };
+        }
 
         let valorDest, mDestFinal;
 
